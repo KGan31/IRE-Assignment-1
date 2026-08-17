@@ -1,0 +1,24 @@
+paths:
+  raw_dir: data/raw
+  interim_dir: data/interim
+  processed_dir: data/processed
+
+mind:
+  repo_id: yjw1029/MIND
+  repo_type: dataset
+  train_zip: MINDsmall_train.zip
+  dev_zip: MINDsmall_dev.zip
+
+ebnerd:
+  demo_zip: ebnerd_demo.zip
+  urls:
+    demo: https://ebnerd-dataset.s3.eu-west-1.amazonaws.com/ebnerd_demo.zip
+    word2vec: https://ebnerd-dataset.s3.eu-west-1.amazonaws.com/artifacts/Ekstra_Bladet_word2vec.zip
+    bert: https://ebnerd-dataset.s3.eu-west-1.amazonaws.com/artifacts/google_bert_base_multilingual_cased.zip
+
+split:
+  test_days: 2
+  val_days: 2
+
+features:
+  recency_half_life_hours: 24
