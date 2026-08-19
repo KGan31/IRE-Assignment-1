@@ -1,4 +1,4 @@
-.PHONY: data download parse split features test clean
+.PHONY: data download parse split features bm25 test clean
 
 # One command, full rebuild from raw files.
 data: download parse split features
@@ -17,6 +17,9 @@ split:
 
 features:
 	python src/feature_store.py --config configs/pipeline.yaml
+
+bm25:
+	python src/eval_bm25.py --dataset all --split val --max_history_len 20 --eval_mode global
 
 test:
 	pytest src/tests/ -v

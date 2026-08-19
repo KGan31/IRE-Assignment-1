@@ -57,13 +57,24 @@ def parse_articles(articles_parquet: Path) -> pd.DataFrame:
     return out
 
 
+def safe_to_list(val) -> list:
+    if val is None:
+        return []
+    try:
+        if len(val) == 0:
+            return []
+    except TypeError:
+        return []
+    return list(val)
+
+
 def parse_impressions(behaviors_parquet: Path) -> pd.DataFrame:
     df = pd.read_parquet(behaviors_parquet)
 
     rows = []
     for row in df.itertuples(index=False):
-        inview = list(getattr(row, "article_ids_inview", []) or [])
-        clicked = list(getattr(row, "article_ids_clicked", []) or [])
+        inview = safe_to_list(getattr(row, "article_ids_inview", None))
+        clicked = safe_to_list(getattr(row, "article_ids_clicked", None))
 
         rows.append({
             "impression_id": make_article_id(DATASET, str(row.impression_id)),
@@ -72,7 +83,7 @@ def parse_impressions(behaviors_parquet: Path) -> pd.DataFrame:
             "timestamp": row.impression_time,
             "candidate_article_ids": [make_article_id(DATASET, a) for a in inview],
             "clicked_article_ids": [make_article_id(DATASET, a) for a in clicked],
-            "session_context": {},
+            "session_context": None,
         })
 
     out = pd.DataFrame(rows)
@@ -86,8 +97,8 @@ def parse_history(history_parquet: Path) -> pd.DataFrame:
 
     rows = []
     for row in df.itertuples(index=False):
-        article_ids = list(getattr(row, "article_id_fixed", []) or [])
-        times = list(getattr(row, "impression_time_fixed", []) or [])
+        article_ids = safe_to_list(getattr(row, "article_id_fixed", None))
+        times = safe_to_list(getattr(row, "impression_time_fixed", None))
         user_id = make_user_id(DATASET, row.user_id)
 
         for aid, t in zip(article_ids, times):

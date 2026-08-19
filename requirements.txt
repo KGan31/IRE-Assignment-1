@@ -1,7 +1,11 @@
 pandas>=2.0
 pyarrow>=14.0
 numpy>=1.24
+scipy>=1.10
+rank-bm25>=0.2.2
+bm25s>=0.3.0
 pyyaml>=6.0
 requests>=2.31
 tqdm>=4.66
 pytest>=7.4
+dotnev

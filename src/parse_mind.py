@@ -104,7 +104,7 @@ def parse_impressions_and_history(behaviors_tsv: Path):
             "timestamp": row.timestamp,
             "candidate_article_ids": candidates,
             "clicked_article_ids": clicked,
-            "session_context": {},
+            "session_context": None,
         })
 
     impressions = pd.DataFrame(impression_rows)

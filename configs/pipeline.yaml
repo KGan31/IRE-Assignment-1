@@ -17,8 +17,14 @@ ebnerd:
     bert: https://ebnerd-dataset.s3.eu-west-1.amazonaws.com/artifacts/google_bert_base_multilingual_cased.zip
 
 split:
-  test_days: 2
-  val_days: 2
+  mind:
+    train_days: 5
+    val_days: 1
+    test_days: 1
+  ebnerd:
+    train_days: 10
+    val_days: 2
+    test_days: 2
 
 features:
   recency_half_life_hours: 24
