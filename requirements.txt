@@ -1,4 +1,5 @@
 pandas>=2.0
+polars>=1.0.0
 pyarrow>=14.0
 numpy>=1.24
 scipy>=1.10
@@ -8,4 +9,6 @@ pyyaml>=6.0
 requests>=2.31
 tqdm>=4.66
 pytest>=7.4
-dotnev
+sentence-transformers>=2.2.0
+faiss-cpu>=1.7.4
+python-dotenv>=1.0.0

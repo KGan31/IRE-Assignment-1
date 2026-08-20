@@ -1,9 +1,7 @@
 """
-Parses raw EB-NeRD parquet files into the unified schema (see schema.py).
+Parses raw EB-NeRD parquet files into the unified schema (see schema.py) using Polars.
 
-EB-NeRD demo bundle ships (approximate schema — verify against your
-downloaded version, field names have shifted slightly across releases):
-
+EB-NeRD demo bundle ships:
 articles.parquet:
     article_id | title | subtitle | body | category_str | published_time | ...
 
@@ -13,13 +11,6 @@ train/behaviors.parquet & validation/behaviors.parquet:
 
 train/history.parquet & validation/history.parquet:
     user_id | impression_time_fixed | article_id_fixed | scroll_percentage_fixed | ...
-    (the *_fixed columns are parallel lists: article_id_fixed[i] was
-    clicked at impression_time_fixed[i])
-
-NOTE: column names occasionally differ between demo/small/large bundles.
-If pd.read_parquet + the column selects below throw a KeyError, run
-`df.columns.tolist()` first and adjust COLUMN maps below — the parsing
-logic itself does not need to change.
 
 Usage:
     python src/parse_ebnerd.py --split train
@@ -29,89 +20,97 @@ Usage:
 import argparse
 from pathlib import Path
 
-import pandas as pd
+import polars as pl
 
-from schema import make_article_id, make_user_id, validate_articles, validate_impressions
+from schema import validate_articles, validate_impressions
 
 DATASET = "ebnerd"
 
 
-def parse_articles(articles_parquet: Path) -> pd.DataFrame:
-    df = pd.read_parquet(articles_parquet)
+def parse_articles(articles_parquet: Path) -> pl.DataFrame:
+    df = pl.read_parquet(articles_parquet)
 
-    def col(name, default=""):
-        return df[name] if name in df.columns else pd.Series([default] * len(df))
+    def col_expr(name: str, default_val: str = ""):
+        if name in df.columns:
+            return pl.col(name).cast(pl.Utf8).fill_null(default_val)
+        return pl.lit(default_val)
 
-    out = pd.DataFrame({
-        "article_id": df["article_id"].map(lambda x: make_article_id(DATASET, x)),
-        "dataset": DATASET,
-        "title": col("title").fillna(""),
-        "abstract": col("subtitle").fillna(""),
-        "body": col("body").fillna(""),
-        "category": col("category_str").fillna(""),
-        "published_time": pd.to_datetime(col("published_time"), errors="coerce"),
-        "entities": [[] for _ in range(len(df))],  # EB-NeRD has no entity annotations natively
-        "embedding": None,  # filled in separately from the word2vec/BERT artifact files, if used
-    })
+    pub_time = (
+        pl.col("published_time").cast(pl.Datetime)
+        if "published_time" in df.columns
+        else pl.lit(None).cast(pl.Datetime)
+    )
+
+    out = df.select([
+        (pl.lit("ebnerd_") + pl.col("article_id").cast(pl.Utf8)).alias("article_id"),
+        pl.lit(DATASET).alias("dataset"),
+        col_expr("title").alias("title"),
+        col_expr("subtitle").alias("abstract"),
+        col_expr("body").alias("body"),
+        col_expr("category_str").alias("category"),
+        pub_time.alias("published_time"),
+        pl.lit([]).cast(pl.List(pl.Utf8)).alias("entities"),
+        pl.lit(None).alias("embedding"),
+    ])
     validate_articles(out)
     return out
 
 
-def safe_to_list(val) -> list:
-    if val is None:
-        return []
-    try:
-        if len(val) == 0:
-            return []
-    except TypeError:
-        return []
-    return list(val)
+def parse_impressions(behaviors_parquet: Path) -> pl.DataFrame:
+    df = pl.read_parquet(behaviors_parquet)
 
+    cands = (
+        pl.col("article_ids_inview").list.eval(pl.lit("ebnerd_") + pl.element().cast(pl.Utf8))
+        if "article_ids_inview" in df.columns
+        else pl.lit([]).cast(pl.List(pl.Utf8))
+    )
+    clicked = (
+        pl.col("article_ids_clicked").list.eval(pl.lit("ebnerd_") + pl.element().cast(pl.Utf8))
+        if "article_ids_clicked" in df.columns
+        else pl.lit([]).cast(pl.List(pl.Utf8))
+    )
 
-def parse_impressions(behaviors_parquet: Path) -> pd.DataFrame:
-    df = pd.read_parquet(behaviors_parquet)
-
-    rows = []
-    for row in df.itertuples(index=False):
-        inview = safe_to_list(getattr(row, "article_ids_inview", None))
-        clicked = safe_to_list(getattr(row, "article_ids_clicked", None))
-
-        rows.append({
-            "impression_id": make_article_id(DATASET, str(row.impression_id)),
-            "dataset": DATASET,
-            "user_id": make_user_id(DATASET, row.user_id),
-            "timestamp": row.impression_time,
-            "candidate_article_ids": [make_article_id(DATASET, a) for a in inview],
-            "clicked_article_ids": [make_article_id(DATASET, a) for a in clicked],
-            "session_context": None,
-        })
-
-    out = pd.DataFrame(rows)
-    out["timestamp"] = pd.to_datetime(out["timestamp"])
+    out = df.select([
+        (pl.lit("ebnerd_") + pl.col("impression_id").cast(pl.Utf8)).alias("impression_id"),
+        pl.lit(DATASET).alias("dataset"),
+        (pl.lit("ebnerd_") + pl.col("user_id").cast(pl.Utf8)).alias("user_id"),
+        pl.col("impression_time").cast(pl.Datetime).alias("timestamp"),
+        cands.alias("candidate_article_ids"),
+        clicked.alias("clicked_article_ids"),
+        pl.lit(None).alias("session_context"),
+    ])
     validate_impressions(out)
     return out
 
 
-def parse_history(history_parquet: Path) -> pd.DataFrame:
-    df = pd.read_parquet(history_parquet)
+def parse_history(history_parquet: Path) -> pl.DataFrame:
+    df = pl.read_parquet(history_parquet)
+    if df.is_empty():
+        return pl.DataFrame(
+            schema={
+                "dataset": pl.Utf8,
+                "user_id": pl.Utf8,
+                "clicked_article_id": pl.Utf8,
+                "click_time": pl.Datetime,
+            }
+        )
 
-    rows = []
-    for row in df.itertuples(index=False):
-        article_ids = safe_to_list(getattr(row, "article_id_fixed", None))
-        times = safe_to_list(getattr(row, "impression_time_fixed", None))
-        user_id = make_user_id(DATASET, row.user_id)
-
-        for aid, t in zip(article_ids, times):
-            rows.append({
-                "dataset": DATASET,
-                "user_id": user_id,
-                "clicked_article_id": make_article_id(DATASET, aid),
-                "click_time": t,
-            })
-
-    out = pd.DataFrame(rows)
-    if not out.empty:
-        out["click_time"] = pd.to_datetime(out["click_time"])
+    out = (
+        df.select([
+            pl.lit(DATASET).alias("dataset"),
+            (pl.lit("ebnerd_") + pl.col("user_id").cast(pl.Utf8)).alias("user_id"),
+            pl.col("article_id_fixed"),
+            pl.col("impression_time_fixed"),
+        ])
+        .explode(["article_id_fixed", "impression_time_fixed"])
+        .filter(pl.col("article_id_fixed").is_not_null())
+        .select([
+            pl.col("dataset"),
+            pl.col("user_id"),
+            (pl.lit("ebnerd_") + pl.col("article_id_fixed").cast(pl.Utf8)).alias("clicked_article_id"),
+            pl.col("impression_time_fixed").cast(pl.Datetime).alias("click_time"),
+        ])
+    )
     return out
 
 
@@ -122,16 +121,15 @@ def main(split: str) -> None:
 
     articles_path = Path("data/raw/ebnerd/demo/articles.parquet")
     if not articles_path.exists():
-        # some bundles place articles.parquet at the top level, shared across splits
         articles_path = raw_dir.parent / "articles.parquet"
 
     articles = parse_articles(articles_path)
     impressions = parse_impressions(raw_dir / "behaviors.parquet")
     history = parse_history(raw_dir / "history.parquet")
 
-    articles.to_parquet(interim_dir / f"articles_{split}.parquet")
-    impressions.to_parquet(interim_dir / f"impressions_{split}.parquet")
-    history.to_parquet(interim_dir / f"history_{split}.parquet")
+    articles.write_parquet(interim_dir / f"articles_{split}.parquet")
+    impressions.write_parquet(interim_dir / f"impressions_{split}.parquet")
+    history.write_parquet(interim_dir / f"history_{split}.parquet")
 
     print(f"[ebnerd/{split}] articles={len(articles)} impressions={len(impressions)} "
           f"history_rows={len(history)}")

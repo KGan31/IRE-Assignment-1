@@ -1,18 +1,19 @@
 """
-Offline Evaluation Runner for BM25 Candidate Generation and Ranking using bm25s.
+Offline Evaluation Runner for Embedding-based Semantic Candidate Generation and Ranking.
 
-Evaluates BM25 retrieval and ranking:
-1. Builds BM25 index over article text catalog (title + abstract).
-2. Constructs search queries for each impression from recent clicked article titles (leakage-free).
-3. Evaluates:
+Evaluates dense semantic retrieval:
+1. Loads/computes article embeddings (MIND via sentence-transformers, EB-NeRD via BERT/W2V/paraphrase).
+2. Builds FAISS dense vector index.
+3. Constructs user representation vectors via leak-free mean-pooling over recent clicks.
+4. Evaluates:
    - Candidate Retrieval (Global Catalog): Recall@50, Recall@100, Recall@200, ILD@10, Novelty@10, Coverage@10
    - Impression Ranking: AUC, MRR, nDCG@5, nDCG@10, ILD@10, Novelty@10
    - Slicing: Cold-Start vs. Warm users, Head vs. Tail articles
    - Statistical Rigor: Bootstrap 95% Confidence Intervals for all metrics
 
 Usage:
-    python src/eval_bm25.py --dataset mind --split val
-    python src/eval_bm25.py --dataset ebnerd --split val
+    python src/eval_embeddings.py --dataset mind --split val
+    python src/eval_embeddings.py --dataset ebnerd --split val
 """
 
 import argparse
@@ -28,7 +29,12 @@ import pandas as pd
 import yaml
 from tqdm import tqdm
 
-from bm25 import BM25InvertedIndex
+from embeddings import (
+    EmbeddingIndex,
+    compute_user_representation,
+    get_or_compute_article_embeddings,
+    normalize_l2,
+)
 from eval_harness import OfflineEvaluationHarness, print_evaluation_summary
 from metrics import compute_recall_at_k
 
@@ -46,40 +52,58 @@ def get_popular_articles(history_df: pd.DataFrame, top_n: int = 200) -> List[str
     return top_articles
 
 
-def evaluate_bm25(
+def evaluate_embeddings(
     dataset_name: str,
     split_name: str,
     processed_dir: Path,
+    raw_dir: Optional[Path] = None,
+    model_name: Optional[str] = None,
     max_history_len: int = 20,
     eval_mode: str = "all",
     k_list: List[int] = [50, 100, 200],
     batch_size: int = 2000,
+    device: Optional[str] = None,
+    force_recompute: bool = False,
     n_bootstraps: int = 1000,
 ) -> Dict[str, Any]:
-    """Run BM25 candidate retrieval and ranking evaluation."""
+    """Run Embedding-based candidate retrieval and ranking evaluation."""
     ds_processed = processed_dir / dataset_name
     articles_path = ds_processed / "articles.parquet"
     impressions_path = ds_processed / f"impressions_{split_name}.parquet"
     history_path = ds_processed / f"history_{split_name}.parquet"
-    embeddings_path = ds_processed / "article_embeddings.npy"
-    if not embeddings_path.exists():
-        embeddings_path = ds_processed / "embeddings.npy"
 
     if not articles_path.exists():
         raise FileNotFoundError(f"Articles file not found: {articles_path}")
     if not impressions_path.exists():
         raise FileNotFoundError(f"Impressions file not found: {impressions_path}")
 
-    # 1. Load articles and build BM25 index
+    # 1. Load articles and compute/load embeddings
     print(f"[{dataset_name} | {split_name}] Loading articles from {articles_path}...")
     articles_df = pd.read_parquet(articles_path)
-    title_map: Dict[str, str] = dict(zip(articles_df["article_id"], articles_df["title"].fillna("")))
 
-    print(f"[{dataset_name} | {split_name}] Building BM25 index ({len(articles_df)} articles)...")
-    bm25_index = BM25InvertedIndex()
-    bm25_index.build_index(articles_df)
+    print(f"[{dataset_name} | {split_name}] Preparing embeddings for {len(articles_df)} articles...")
+    embeddings, article_id_to_idx, article_ids = get_or_compute_article_embeddings(
+        dataset_name=dataset_name,
+        articles_df=articles_df,
+        processed_dir=processed_dir,
+        raw_dir=raw_dir,
+        model_name=model_name,
+        device=device,
+        force_recompute=force_recompute,
+    )
 
-    # 2. Load history & impressions
+    # Ensure embeddings are L2 normalized
+    embeddings_norm = normalize_l2(embeddings)
+
+    # 2. Build FAISS Vector Index
+    print(f"[{dataset_name} | {split_name}] Building FAISS vector index (dim={embeddings.shape[1]})...")
+    vector_index = EmbeddingIndex()
+    vector_index.build_index(embeddings_norm, article_ids)
+
+    # Compute global mean vector for cold-start users
+    global_mean_vector = normalize_l2(np.mean(embeddings_norm, axis=0))
+
+    # 3. Load history & impressions
     print(f"[{dataset_name} | {split_name}] Loading impressions from {impressions_path}...")
     impressions_df = pd.read_parquet(impressions_path)
 
@@ -87,26 +111,17 @@ def evaluate_bm25(
     if history_path.exists():
         history_df = pd.read_parquet(history_path)
 
-    # Load precomputed embeddings if available for ILD calculation
-    embeddings = None
-    article_id_to_idx = {aid: idx for idx, aid in enumerate(articles_df["article_id"].astype(str))}
-    if embeddings_path.exists():
-        try:
-            embeddings = np.load(embeddings_path)
-        except Exception:
-            pass
-
     # Initialize evaluation harness
     harness = OfflineEvaluationHarness.from_data(
         articles_df=articles_df,
         history_df=history_df,
-        embeddings=embeddings,
+        embeddings=embeddings_norm,
         article_id_to_idx=article_id_to_idx,
         n_bootstraps=n_bootstraps,
         cold_start_threshold=5,
     )
 
-    # Compute popular fallback articles
+    # Popular fallback
     popular_fallback = get_popular_articles(history_df, top_n=max(k_list))
     if not popular_fallback and not articles_df.empty:
         popular_fallback = articles_df["article_id"].head(max(k_list)).tolist()
@@ -129,9 +144,9 @@ def evaluate_bm25(
 
     max_k = max(k_list)
 
-    # 3. Construct queries for all impressions
-    print(f"[{dataset_name} | {split_name}] Preparing queries for {len(impressions_df)} impressions...")
-    queries: List[str] = []
+    # 4. Construct user vectors for impressions (leakage-free)
+    print(f"[{dataset_name} | {split_name}] Encoding user representation vectors for {len(impressions_df)} impressions...")
+    user_vectors_list: List[np.ndarray] = []
     ground_truths: List[Set[str]] = []
     history_lengths: List[int] = []
     is_head_gt: List[bool] = []
@@ -173,22 +188,21 @@ def evaluate_bm25(
         recent_clicks = prior_clicks[-max_history_len:] if prior_clicks else []
         history_lengths.append(len(recent_clicks))
 
-        query_titles = [title_map.get(aid, "") for aid in recent_clicks if aid in title_map]
-        q_text = " ".join([t for t in query_titles if t]).strip()
-        queries.append(q_text)
+        u_vec = compute_user_representation(
+            clicked_article_ids=recent_clicks,
+            article_id_to_idx=article_id_to_idx,
+            embeddings=embeddings_norm,
+        )
 
-    num_queries = len(queries)
+        if u_vec is None:
+            user_vectors_list.append(global_mean_vector)
+        else:
+            user_vectors_list.append(u_vec)
+
+    query_matrix = np.vstack(user_vectors_list).astype(np.float32)
+    num_queries = len(query_matrix)
+
     all_results: Dict[str, Any] = {}
-
-    # 4. Fast Batch BM25 Retrieval
-    print(f"[{dataset_name} | {split_name}] Running fast batch BM25 search for {num_queries} queries...")
-    all_retrieved_pairs: List[List[Tuple[str, float]]] = []
-
-    for start_idx in tqdm(range(0, num_queries, batch_size), desc="BM25 Search"):
-        end_idx = min(start_idx + batch_size, num_queries)
-        batch_q = queries[start_idx:end_idx]
-        batch_pairs = bm25_index.batch_search(batch_q, top_k=max_k)
-        all_retrieved_pairs.extend(batch_pairs)
 
     # 5. Impression Candidate Ranking (AUC, MRR, nDCG@5, nDCG@10)
     if eval_mode in ["all", "impression"] and any(impression_cands_list):
@@ -196,10 +210,16 @@ def evaluate_bm25(
         all_candidate_scores: List[List[float]] = []
 
         for i in range(num_queries):
+            u_vec = query_matrix[i]
             cands = impression_cands_list[i]
-            retrieved_map = dict(all_retrieved_pairs[i])
-            # Assign BM25 score if retrieved in top_k, else 0.0
-            cand_scores = [retrieved_map.get(aid, 0.0) for aid in cands]
+            cand_scores = []
+            for aid in cands:
+                if aid in article_id_to_idx:
+                    doc_vec = embeddings_norm[article_id_to_idx[aid]]
+                    score = float(np.dot(u_vec, doc_vec))
+                else:
+                    score = 0.0
+                cand_scores.append(score)
             all_candidate_scores.append(cand_scores)
 
         ranking_results = harness.evaluate_impression_ranking(
@@ -210,28 +230,36 @@ def evaluate_bm25(
         )
 
         print_evaluation_summary(
-            f"BM25 Impression Candidate Ranking: {dataset_name.upper()} ({split_name})",
+            f"Dense Semantic Impression Ranking: {dataset_name.upper()} ({split_name})",
             ranking_results,
         )
         all_results["ranking"] = ranking_results
 
     # 6. Global Candidate Retrieval (Recall@K, ILD, Novelty, Coverage)
     if eval_mode in ["all", "global"]:
+        print(f"[{dataset_name} | {split_name}] Running fast batch vector search for {num_queries} queries...")
         all_retrieved_ids: List[List[str]] = []
-        for i, pairs in enumerate(all_retrieved_pairs):
-            retrieved_ids = [aid for aid, score in pairs]
 
-            # Fallback padding if retrieved_ids < max_k
-            if len(retrieved_ids) < max_k:
-                existing = set(retrieved_ids)
-                for pop_id in popular_fallback:
-                    if pop_id not in existing:
-                        retrieved_ids.append(pop_id)
-                        existing.add(pop_id)
-                        if len(retrieved_ids) >= max_k:
-                            break
+        for start_idx in tqdm(range(0, num_queries, batch_size), desc="Dense Retrieval"):
+            end_idx = min(start_idx + batch_size, num_queries)
+            batch_q = query_matrix[start_idx:end_idx]
 
-            all_retrieved_ids.append(retrieved_ids)
+            batch_retrieved_pairs = vector_index.batch_search(batch_q, top_k=max_k)
+
+            for i, pairs in enumerate(batch_retrieved_pairs):
+                retrieved_ids = [aid for aid, score in pairs]
+
+                # Fallback padding
+                if len(retrieved_ids) < max_k:
+                    existing = set(retrieved_ids)
+                    for pop_id in popular_fallback:
+                        if pop_id not in existing:
+                            retrieved_ids.append(pop_id)
+                            existing.add(pop_id)
+                            if len(retrieved_ids) >= max_k:
+                                break
+
+                all_retrieved_ids.append(retrieved_ids)
 
         retrieval_results = harness.evaluate_retrieval(
             retrieved_lists=all_retrieved_ids,
@@ -243,7 +271,7 @@ def evaluate_bm25(
         )
 
         print_evaluation_summary(
-            f"BM25 Candidate Retrieval (Global Search): {dataset_name.upper()} ({split_name})",
+            f"Dense Candidate Retrieval (Global Search): {dataset_name.upper()} ({split_name})",
             retrieval_results,
         )
         all_results["retrieval"] = retrieval_results
@@ -252,12 +280,16 @@ def evaluate_bm25(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run BM25 candidate retrieval and ranking evaluation using bm25s.")
+    parser = argparse.ArgumentParser(description="Run Embedding-based candidate retrieval and ranking evaluation.")
     parser.add_argument("--config", default="configs/pipeline.yaml", help="Path to pipeline YAML config")
     parser.add_argument("--dataset", choices=["mind", "ebnerd", "all"], default="mind", help="Dataset to evaluate")
     parser.add_argument("--split", choices=["train", "val", "test"], default="val", help="Split to evaluate")
+    parser.add_argument("--model_name", default=None, help="HuggingFace model name override")
     parser.add_argument("--max_history_len", type=int, default=20, help="Max recent clicked articles for user query")
     parser.add_argument("--eval_mode", choices=["all", "global", "impression"], default="all", help="Evaluation mode (all, global, impression)")
+    parser.add_argument("--batch_size", type=int, default=2000, help="Batch size for vector search")
+    parser.add_argument("--device", default=None, help="Device to use for embedding inference ('cpu', 'cuda')")
+    parser.add_argument("--force_recompute", action="store_true", help="Force recomputing embeddings")
     parser.add_argument("--n_bootstraps", type=int, default=1000, help="Number of bootstrap resamples for 95%% CI")
 
     args = parser.parse_args()
@@ -266,19 +298,25 @@ def main():
         cfg = yaml.safe_load(f)
 
     processed_dir = Path(cfg["paths"]["processed_dir"])
+    raw_dir = Path(cfg["paths"]["raw_dir"]) if "raw_dir" in cfg["paths"] else None
 
     datasets = ["mind", "ebnerd"] if args.dataset == "all" else [args.dataset]
 
     results_all = {}
     for ds in datasets:
-        print(f"\n--- Starting BM25 Evaluation for {ds.upper()} ---")
+        print(f"\n--- Starting Embedding Evaluation for {ds.upper()} ---")
         try:
-            res = evaluate_bm25(
+            res = evaluate_embeddings(
                 dataset_name=ds,
                 split_name=args.split,
                 processed_dir=processed_dir,
+                raw_dir=raw_dir,
+                model_name=args.model_name,
                 max_history_len=args.max_history_len,
                 eval_mode=args.eval_mode,
+                batch_size=args.batch_size,
+                device=args.device,
+                force_recompute=args.force_recompute,
                 n_bootstraps=args.n_bootstraps,
             )
             results_all[ds] = res

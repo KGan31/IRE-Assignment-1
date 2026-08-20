@@ -55,23 +55,30 @@ def make_user_id(dataset: str, raw_id: str) -> str:
     return f"{dataset}_{raw_id}"
 
 
-def validate_articles(df: pd.DataFrame) -> None:
+from typing import Optional, Union
+import pandas as pd
+import polars as pl
+
+
+def validate_articles(df: Union[pd.DataFrame, pl.DataFrame]) -> None:
     _validate_columns(df, ARTICLE_COLUMNS, "articles")
 
 
-def validate_impressions(df: pd.DataFrame) -> None:
+def validate_impressions(df: Union[pd.DataFrame, pl.DataFrame]) -> None:
     _validate_columns(df, IMPRESSION_COLUMNS, "impressions")
 
 
-def validate_user_history(df: pd.DataFrame) -> None:
+def validate_user_history(df: Union[pd.DataFrame, pl.DataFrame]) -> None:
     _validate_columns(df, USER_HISTORY_COLUMNS, "user_history")
 
 
-def _validate_columns(df: pd.DataFrame, expected: dict, name: str) -> None:
-    missing = set(expected.keys()) - set(df.columns)
+def _validate_columns(df: Union[pd.DataFrame, pl.DataFrame], expected: dict, name: str) -> None:
+    cols = set(df.columns)
+    missing = set(expected.keys()) - cols
     if missing:
         raise ValueError(f"[{name}] missing required columns: {missing}")
-    if df.empty:
+    is_empty = df.is_empty() if hasattr(df, "is_empty") else df.empty
+    if is_empty:
         raise ValueError(f"[{name}] dataframe is empty")
 
 

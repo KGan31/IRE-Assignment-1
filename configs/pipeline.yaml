@@ -9,6 +9,17 @@ mind:
   train_zip: MINDsmall_train.zip
   dev_zip: MINDsmall_dev.zip
 
+mind_large:
+  repo_id: yjw1029/MIND
+  repo_type: dataset
+  train_zip: MINDlarge_train.zip
+  dev_zip: MINDlarge_dev.zip
+  test_zip: MINDlarge_test.zip
+  urls:
+    train: https://mind201910small.blob.core.windows.net/release/MINDlarge_train.zip
+    dev: https://mind201910small.blob.core.windows.net/release/MINDlarge_dev.zip
+    test: https://mind201910small.blob.core.windows.net/release/MINDlarge_test.zip
+
 ebnerd:
   demo_zip: ebnerd_demo.zip
   urls:
@@ -18,13 +29,13 @@ ebnerd:
 
 split:
   mind:
-    train_days: 5
-    val_days: 1
-    test_days: 1
+    train_ratio: 0.8
+    val_ratio: 0.1
+    test_ratio: 0.1
   ebnerd:
-    train_days: 10
-    val_days: 2
-    test_days: 2
+    train_ratio: 0.8
+    val_ratio: 0.1
+    test_ratio: 0.1
 
 features:
   recency_half_life_hours: 24
