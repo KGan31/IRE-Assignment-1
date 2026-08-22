@@ -28,11 +28,40 @@ This runs, in order:
 Run stages individually with `make download`, `make parse`, `make split`,
 `make features`.
 
+## Codabench Submission Pipelines (MIND & EB-NeRD Large)
+
+For official competition submissions on Codabench:
+
+### 1. MIND Large (Competition #13967)
+```bash
+# Download and unzip MIND large
+python src/download.py --dataset mind_large
+
+# Parse into unified schema (train, dev, test)
+python src/parse_mind.py --dataset_type large --split all
+
+# Evaluate on dev and generate Codabench prediction.zip
+python src/generate_mind_submission.py --dataset_type large --eval_dev --output_dir submissions
+```
+
+### 2. EB-NeRD Large (Competition #2469)
+```bash
+# Download and unzip EB-NeRD large & testset
+python src/download.py --dataset ebnerd_large
+
+# Parse into unified schema (train, validation, test)
+python src/parse_ebnerd.py --dataset_type large --split all
+
+# Evaluate on validation and generate Codabench predictions.zip
+python src/generate_ebnerd_submission.py --dataset_type large --eval_dev --output_dir submissions_ebnerd
+```
+
 ## Run the leakage tests
 
 ```bash
 make test
 ```
+
 
 Verifies (Q9 requirement):
 - No timestamp overlap between train/val/test impressions

@@ -7,4 +7,6 @@ __pycache__/
 venv/
 .pytest_cache/
 .ipynb_checkpoints/
-submissions/*
+submissions/
+submissions_semantic/
+submissions*

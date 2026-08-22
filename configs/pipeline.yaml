@@ -27,6 +27,19 @@ ebnerd:
     word2vec: https://ebnerd-dataset.s3.eu-west-1.amazonaws.com/artifacts/Ekstra_Bladet_word2vec.zip
     bert: https://ebnerd-dataset.s3.eu-west-1.amazonaws.com/artifacts/google_bert_base_multilingual_cased.zip
 
+ebnerd_large:
+  zips:
+    large_zip: ebnerd_large.zip
+    articles_large_only_zip: articles_large_only.zip
+    testset_zip: ebnerd_testset.zip
+  urls:
+    large: https://ebnerd-dataset.s3.eu-west-1.amazonaws.com/ebnerd_large.zip
+    articles_large_only: https://ebnerd-dataset.s3.eu-west-1.amazonaws.com/artifacts/articles_large_only.zip
+    testset: https://ebnerd-dataset.s3.eu-west-1.amazonaws.com/ebnerd_testset.zip
+    word2vec: https://ebnerd-dataset.s3.eu-west-1.amazonaws.com/artifacts/Ekstra_Bladet_word2vec.zip
+    bert: https://ebnerd-dataset.s3.eu-west-1.amazonaws.com/artifacts/google_bert_base_multilingual_cased.zip
+
+
 split:
   mind:
     train_ratio: 0.8

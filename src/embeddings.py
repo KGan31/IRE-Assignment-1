@@ -52,21 +52,39 @@ def load_ebnerd_pretrained_embeddings(
 ) -> Optional[Tuple[np.ndarray, List[str]]]:
     """Attempt to load Ekstra Bladet pre-trained embeddings (BERT or Word2Vec)."""
     possible_paths = [
+        raw_dir,
         raw_dir / "ebnerd" / "bert",
         raw_dir / "ebnerd" / "word2vec",
+        raw_dir / "ebnerd_large" / "bert",
+        raw_dir / "ebnerd_large" / "word2vec",
         raw_dir / "ebnerd" / "demo" / "bert",
         raw_dir / "ebnerd" / "demo" / "word2vec",
+        raw_dir / "bert",
+        raw_dir / "word2vec",
     ]
 
     target_files = []
     for p in possible_paths:
         if p.exists():
-            target_files.extend(list(p.glob("*.parquet")) + list(p.glob("*.npy")))
+            if p.is_file() and p.suffix in [".parquet", ".npy"]:
+                target_files.append(p)
+            elif p.is_dir():
+                target_files.extend(list(p.rglob("*.parquet")) + list(p.rglob("*.npy")))
 
-    if not target_files:
+    # Deduplicate preserving order and skip __MACOSX
+    seen = set()
+    unique_target_files = []
+    for tf in target_files:
+        if "__MACOSX" in str(tf) or tf.name.startswith("._"):
+            continue
+        if tf not in seen:
+            seen.add(tf)
+            unique_target_files.append(tf)
+
+    if not unique_target_files:
         return None
 
-    for tf in target_files:
+    for tf in unique_target_files:
         try:
             if tf.suffix == ".parquet":
                 emb_df = pd.read_parquet(tf)
@@ -75,7 +93,7 @@ def load_ebnerd_pretrained_embeddings(
                 for col in emb_df.columns:
                     if "id" in col.lower():
                         id_col = col
-                    if "vector" in col.lower() or "emb" in col.lower() or "bert" in col.lower():
+                    if "vector" in col.lower() or "emb" in col.lower() or "bert" in col.lower() or "google" in col.lower():
                         vec_col = col
 
                 if id_col and vec_col:
@@ -96,6 +114,7 @@ def load_ebnerd_pretrained_embeddings(
                         if aid in id_to_vec:
                             aligned_matrix[i] = id_to_vec[aid]
 
+                    print(f"[EB-NeRD] Aligned {len(aligned_matrix):,} embeddings with dimension {dim}.")
                     return aligned_matrix, article_ids
         except Exception as e:
             print(f"Warning: Failed to load pre-trained embeddings from {tf}: {e}")
@@ -108,8 +127,9 @@ def compute_article_embeddings_hf(
     model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
     batch_size: int = 256,
     device: Optional[str] = None,
+    include_body: bool = True,
 ) -> np.ndarray:
-    """Compute dense text embeddings using SentenceTransformer over title + abstract."""
+    """Compute dense text embeddings using SentenceTransformer over title + abstract [+ body]."""
     if not HAS_SENTENCE_TRANSFORMERS:
         raise ImportError(
             "sentence-transformers is required to compute text embeddings. "
@@ -122,8 +142,12 @@ def compute_article_embeddings_hf(
         if "abstract" in articles_df.columns
         else [""] * len(titles)
     )
+    if include_body and "body" in articles_df.columns:
+        bodies = articles_df["body"].fillna("").astype(str).tolist()
+        texts = [f"{t} {a} {b}".strip() for t, a, b in zip(titles, abstracts, bodies)]
+    else:
+        texts = [f"{t} {a}".strip() for t, a in zip(titles, abstracts)]
 
-    texts = [f"{t} {a}".strip() for t, a in zip(titles, abstracts)]
     # Fallback non-empty text for blanks
     texts = [txt if txt else "news article" for txt in texts]
 
