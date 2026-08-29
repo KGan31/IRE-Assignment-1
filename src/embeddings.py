@@ -237,10 +237,20 @@ def get_or_compute_article_embeddings(
 
 
 class EmbeddingIndex:
-    """FAISS-powered dense vector index with pure numpy fallback."""
+    """FAISS-powered dense vector index with pure numpy fallback.
 
-    def __init__(self, use_approximate: bool = False):
+    Three index modes are supported (controlled by constructor flags):
+    - flat      : FAISS IndexFlatIP — exact brute-force inner-product search (default).
+    - ann       : FAISS IndexHNSWFlat — approximate nearest-neighbour search.
+                  Set use_approximate=True.  Works regardless of corpus size.
+    - numpy     : Pure-numpy matrix-multiply brute-force — no FAISS required.
+                  Set force_numpy=True.  Useful for ablations and FAISS-free envs.
+    """
+
+    def __init__(self, use_approximate: bool = False, force_numpy: bool = False):
         self.use_approximate = use_approximate
+        # force_numpy overrides FAISS entirely, giving a pure-python brute-force baseline.
+        self.force_numpy = force_numpy
         self.article_ids: List[str] = []
         self.article_id_to_idx: Dict[str, int] = {}
         self.embeddings: Optional[np.ndarray] = None
@@ -257,19 +267,27 @@ class EmbeddingIndex:
         self.article_id_to_idx = {aid: i for i, aid in enumerate(self.article_ids)}
         num_docs, dim = self.embeddings.shape
 
-        if HAS_FAISS:
-            if self.use_approximate and num_docs > 10000:
-                # HNSW flat index with M=32
+        if self.force_numpy:
+            # Explicit numpy-only brute-force — skip FAISS entirely.
+            self.index = None
+        elif HAS_FAISS:
+            if self.use_approximate:
+                # HNSW approximate index — works for any corpus size.
+                # M=32 controls the graph connectivity; efSearch=64 trades
+                # speed for recall (higher = more accurate but slower).
                 index = faiss.IndexHNSWFlat(dim, 32, faiss.METRIC_INNER_PRODUCT)
                 index.hnsw.efSearch = 64
                 index.add(self.embeddings)
                 self.index = index
+                print(f"[EmbeddingIndex] Built FAISS HNSW (ANN) index over {num_docs:,} docs (M=32, efSearch=64).")
             else:
                 index = faiss.IndexFlatIP(dim)
                 index.add(self.embeddings)
                 self.index = index
+                print(f"[EmbeddingIndex] Built FAISS Flat (exact) index over {num_docs:,} docs.")
         else:
             self.index = None
+            print(f"[EmbeddingIndex] FAISS not available — using numpy brute-force over {num_docs:,} docs.")
 
         self.is_built = True
 
@@ -281,6 +299,11 @@ class EmbeddingIndex:
         """
         Batch retrieve top-K (article_id, similarity_score) for a matrix of query vectors.
         query_vectors shape: (Q, D), float32
+
+        Dispatch order:
+        1. force_numpy=True  -> numpy matrix-multiply brute-force (always exact).
+        2. HAS_FAISS and self.index is not None -> FAISS (flat exact OR HNSW ANN).
+        3. Fallback           -> numpy matrix-multiply brute-force.
         """
         if not self.is_built or len(self.article_ids) == 0 or len(query_vectors) == 0:
             return [[] for _ in range(len(query_vectors))]
@@ -289,7 +312,8 @@ class EmbeddingIndex:
         num_docs = len(self.article_ids)
         k = min(top_k, num_docs)
 
-        if HAS_FAISS and self.index is not None:
+        # --- FAISS path (flat exact or HNSW ANN) ---
+        if not self.force_numpy and HAS_FAISS and self.index is not None:
             scores, indices = self.index.search(q_vecs, k)
             results: List[List[Tuple[str, float]]] = []
             for row_indices, row_scores in zip(indices, scores):
@@ -300,8 +324,8 @@ class EmbeddingIndex:
                 results.append(row_res)
             return results
 
-        # Numpy fallback (matrix multiplication for Inner Product / Cosine Similarity)
-        # q_vecs: (Q, D), self.embeddings.T: (D, N) -> sim_matrix: (Q, N)
+        # --- Numpy brute-force path (explicit or fallback) ---
+        # q_vecs: (Q, D) @ embeddings.T: (D, N) -> sim_matrix: (Q, N)
         sim_matrix = np.dot(q_vecs, self.embeddings.T)
         results = []
         for i in range(len(query_vectors)):

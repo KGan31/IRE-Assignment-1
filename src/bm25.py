@@ -33,6 +33,44 @@ def default_tokenize(text: str) -> List[str]:
     return re.findall(r"\w+", str(text).lower())
 
 
+def create_article_text_map(
+    articles_df: pd.DataFrame, fields: str = "title"
+) -> Dict[str, str]:
+    """
+    Build a mapping from article_id to query text representation based on selected fields.
+
+    Args:
+        articles_df: DataFrame containing at least 'article_id' and 'title', and optionally 'abstract'.
+        fields: 'title' for title-only, or 'title_abstract' / 'title+abstract' / 'both' for title + abstract.
+
+    Returns:
+        Dict mapping article_id (as str) to text string.
+    """
+    if articles_df.empty or "article_id" not in articles_df.columns:
+        return {}
+
+    article_ids = articles_df["article_id"].astype(str).tolist()
+    titles = articles_df["title"].fillna("").astype(str).tolist() if "title" in articles_df.columns else [""] * len(article_ids)
+
+    norm_fields = str(fields).lower().replace("+", "_").replace(" ", "_")
+    if norm_fields in ("title_abstract", "title_and_abstract", "both", "abstract_title"):
+        abstracts = (
+            articles_df["abstract"].fillna("").astype(str).tolist()
+            if "abstract" in articles_df.columns
+            else (
+                articles_df["subtitle"].fillna("").astype(str).tolist()
+                if "subtitle" in articles_df.columns
+                else [""] * len(article_ids)
+            )
+        )
+        return {
+            aid: f"{t} {a}".strip()
+            for aid, t, a in zip(article_ids, titles, abstracts)
+        }
+    else:
+        return {aid: t.strip() for aid, t in zip(article_ids, titles)}
+
+
 class BM25InvertedIndex:
     """High-performance BM25 Index wrapper using bm25s or rank-bm25."""
 
@@ -51,8 +89,16 @@ class BM25InvertedIndex:
             return self.retriever.vocab_dict
         return {}
 
-    def build_index(self, articles_df: pd.DataFrame) -> None:
-        """Build BM25 index over article title + abstract."""
+    def build_index(self, articles_df: pd.DataFrame, include_body: bool = False) -> None:
+        """Build BM25 index over article text.
+
+        Args:
+            articles_df: DataFrame with at least 'article_id' and 'title' columns.
+            include_body: If True and a 'body' column exists, append body text to
+                the indexed document string (title + abstract + body).  Useful for
+                the EB-NeRD body-text ablation.  Has no effect when the column is
+                absent.
+        """
         if articles_df.empty:
             raise ValueError("Cannot build BM25 index on empty DataFrame")
 
@@ -61,13 +107,22 @@ class BM25InvertedIndex:
         num_docs = len(self.article_ids)
 
         titles = articles_df["title"].fillna("").astype(str).tolist()
+        # EB-NeRD uses 'subtitle' as its abstract-equivalent field.
         abstracts = (
             articles_df["abstract"].fillna("").astype(str).tolist()
             if "abstract" in articles_df.columns
-            else [""] * num_docs
+            else (
+                articles_df["subtitle"].fillna("").astype(str).tolist()
+                if "subtitle" in articles_df.columns
+                else [""] * num_docs
+            )
         )
 
-        full_texts = [f"{t} {a}".strip() for t, a in zip(titles, abstracts)]
+        if include_body and "body" in articles_df.columns:
+            bodies = articles_df["body"].fillna("").astype(str).tolist()
+            full_texts = [f"{t} {a} {b}".strip() for t, a, b in zip(titles, abstracts, bodies)]
+        else:
+            full_texts = [f"{t} {a}".strip() for t, a in zip(titles, abstracts)]
 
         if HAS_BM25S:
             corpus_tokens = bm25s.tokenize(full_texts, show_progress=False)

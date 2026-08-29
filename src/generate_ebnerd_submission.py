@@ -57,14 +57,15 @@ class FastBM25Scorer:
         self.doc_weights: Dict[str, Dict[str, float]] = {}  # doc_id -> {token: doc_term_weight}
         self.idf: Dict[str, float] = {}  # token -> idf
         self.doc_titles: Dict[str, str] = {}
+        self.doc_texts: Dict[str, str] = {}
         self.doc_lengths: Dict[str, int] = {}
         self.avgdl: float = 0.0
         self.num_docs: int = 0
 
-    def fit(self, articles_df: pd.DataFrame, include_body: bool = False) -> None:
+    def fit(self, articles_df: pd.DataFrame, include_body: bool = False, history_fields: str = "title_abstract") -> None:
         """Index articles (title + subtitle/abstract, skipping body for speed) and precompute term weights."""
         fields_str = "title + abstract + body" if include_body else "title + abstract (skipping body)"
-        print(f"Building FastBM25 index over {len(articles_df):,} articles ({fields_str})...")
+        print(f"Building FastBM25 index over {len(articles_df):,} articles ({fields_str}, history_fields: {history_fields})...")
         self.num_docs = len(articles_df)
         df_counts: Dict[str, int] = Counter()
         doc_tokens_map: Dict[str, List[str]] = {}
@@ -82,8 +83,15 @@ class FastBM25Scorer:
         else:
             bodies = [""] * self.num_docs
 
+        norm_fields = str(history_fields).lower().replace("+", "_").replace(" ", "_")
+        include_abstract_in_query = norm_fields in ("title_abstract", "title_and_abstract", "both", "abstract_title")
+
         for aid, title, subtitle, body in zip(article_ids, titles, subtitles, bodies):
             self.doc_titles[aid] = title
+            if include_abstract_in_query:
+                self.doc_texts[aid] = f"{title} {subtitle}".strip()
+            else:
+                self.doc_texts[aid] = title.strip()
             if include_body and body:
                 full_text = f"{title} {subtitle} {body}".strip()
             else:
@@ -263,7 +271,7 @@ def evaluate_dev_split(
     for uid in set(user_ids):
         recent_clicks = user_history_map.get(uid, [])
         if recent_clicks:
-            q_text = " ".join([scorer.doc_titles.get(aid, "") for aid in recent_clicks if aid in scorer.doc_titles])
+            q_text = " ".join([scorer.doc_texts.get(aid, "") for aid in recent_clicks if aid in scorer.doc_texts])
             tokens = tokenize(q_text)
             if tokens:
                 q_tf = Counter(tokens)
@@ -368,7 +376,7 @@ def generate_submission(
     for uid in unique_users:
         recent_clicks = user_history_map.get(uid, [])
         if recent_clicks:
-            q_text = " ".join([scorer.doc_titles.get(aid, "") for aid in recent_clicks if aid in scorer.doc_titles])
+            q_text = " ".join([scorer.doc_texts.get(aid, "") for aid in recent_clicks if aid in scorer.doc_texts])
             tokens = tokenize(q_text)
             if tokens:
                 q_tf = Counter(tokens)
@@ -458,6 +466,12 @@ def main():
     parser.add_argument("--eval_dev", action="store_true", help="Evaluate BM25 ranking on validation split")
     parser.add_argument("--val_sample_size", type=int, default=100000, help="Validation sample size for evaluation (-1 for all)")
     parser.add_argument("--include_body", action="store_true", default=False, help="Include body text in index (default: False, title+abstract only)")
+    parser.add_argument(
+        "--history_fields",
+        choices=["title", "title_abstract", "title+abstract", "both"],
+        default="title_abstract",
+        help="Fields from history articles in query: 'title' or 'title_abstract' / 'title+abstract' (default: title_abstract)",
+    )
     parser.add_argument("--output_dir", default="submissions_ebnerd", help="Output directory for submission zip")
     parser.add_argument("--max_history_len", type=int, default=20, help="Max recent articles for query")
     parser.add_argument("--use_popularity_fallback", action="store_true", default=True, help="Use popularity tie-breaker")
@@ -489,7 +503,7 @@ def main():
     # 1. Load articles and fit BM25 Scorer
     articles_df = pd.read_parquet(articles_path)
     scorer = FastBM25Scorer()
-    scorer.fit(articles_df, include_body=args.include_body)
+    scorer.fit(articles_df, include_body=args.include_body, history_fields=args.history_fields)
 
     # 2. Compute article popularity if requested
     pop_map = None

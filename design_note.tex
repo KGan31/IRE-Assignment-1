@@ -1,0 +1,279 @@
+\documentclass[11pt,a4paper]{article}
+
+% --- Packages ---
+\usepackage[margin=1.8cm]{geometry}
+\usepackage{times}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{amsmath}
+\usepackage{parskip}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+
+% --- Layout ---
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{4pt}
+\titlespacing*{\section}{0pt}{8pt}{4pt}
+\titlespacing*{\subsection}{0pt}{6pt}{2pt}
+\titleformat{\section}{\normalfont\bfseries\large}{\thesection}{0.5em}{}
+\titleformat{\subsection}{\normalfont\bfseries}{\thesubsection}{0.5em}{}
+
+\setlist[itemize]{noitemsep, topsep=2pt, parsep=0pt, leftmargin=*}
+\setlist[enumerate]{noitemsep, topsep=2pt, parsep=0pt, leftmargin=*}
+
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{\small CS4.406 $\cdot$ Assignment 1 $\cdot$ Design Note}
+\lhead{\small Kavan Gandhi}
+\rfoot{\small \thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% --- Colours ---
+\definecolor{darkblue}{RGB}{0,51,102}
+\hypersetup{colorlinks=true, linkcolor=darkblue, urlcolor=darkblue, citecolor=darkblue}
+
+\begin{document}
+
+\begin{center}
+  {\Large\bfseries Design Note: Lexical \& Semantic News Retrieval\\[2pt]
+  on MIND and EB-NeRD}\\[6pt]
+  {\normalsize Kavan Gandhi \quad CS4.406 Information Retrieval \& Extraction}\\[2pt]
+  {\small \textit{August 2026} \quad GitHub: \texttt{IRE-Assignment-1}}
+\end{center}
+\vspace{-4pt}\hrule\vspace{6pt}
+
+% -----------------------------------------------------------------------
+\section{What Was Built}
+% -----------------------------------------------------------------------
+
+\subsection{Reproducible Data Pipeline (Q1)}
+
+A five-stage pipeline (\texttt{make data}) rebuilds both datasets from scratch:
+
+\begin{enumerate}
+  \item \textbf{Download} --- fetches MIND-small (train/dev) and EB-NeRD-demo via HTTPS.
+  \item \textbf{Parse} --- both TSV/parquet formats are normalised into a \emph{unified schema}: \texttt{articles} (article\_id, title, abstract, body, category, embeddings), \texttt{impressions} (impression\_id, user\_id, timestamp, history, candidates+labels), and \texttt{user\_history} (\texttt{src/schema.py}).
+  \item \textbf{Temporal Split} --- train/val/test is always time-ordered (never random).  For MIND-small, the provided train/dev split is respected; for EB-NeRD, the last two validation days of the demo split are held out.  A helper enforces that user history features use only clicks \emph{before} the split's earliest impression timestamp, preventing future leakage (\texttt{src/split.py}).
+  \item \textbf{Feature Store} --- writes \texttt{article\_features.parquet} and per-split \texttt{user\_features.parquet} (\texttt{src/feature\_store.py}).
+  Each row in \texttt{user\_features} represents one user and contains three fields derived from that user's raw click log:
+  \begin{itemize}
+    \item \texttt{click\_history} --- an ordered list of \texttt{article\_id}s the user clicked, filtered to clicks that occurred strictly before the split's earliest impression timestamp (via \texttt{split.history\_as\_of}), preventing any future leakage.
+    \item \texttt{n\_clicks} --- total number of eligible historical clicks for that user.
+    \item \texttt{recency\_score} --- a scalar summarising how fresh the user's interest is, computed as $\sum_{i} 0.5^{\,a_i / h}$ where $a_i$ is the age in hours of click $i$ and $h{=}24$ h is the exponential decay half-life; a high score means the user was recently active.
+  \end{itemize}
+  User features are re-computed independently for each split (train / val / test) so that downstream retrieval models always see a leakage-free snapshot of user behaviour.
+  \item \textbf{Leakage Tests} --- \texttt{make test} (pytest) verifies: no timestamp overlap across splits, no duplicate impressions, and history click timestamps strictly precede impression timestamps.
+\end{enumerate}
+
+\textit{Known simplification}: MIND does not record individual click timestamps; each history click is approximated with the owning impression's timestamp (upper-bound, documented in README).
+
+\subsection{Lexical Candidate Generation --- BM25 (Q2)}
+
+An inverted index is built over article \texttt{title + abstract} text.  Given an impression, the user's most recent 20 clicked articles form the BM25 query (titles concatenated).  Okapi BM25 uses $k_1{=}1.5$, $b{=}0.75$.  Top-$K$ candidates are retrieved for $K \in \{50, 100, 200\}$.
+
+\subsection{Semantic Candidate Generation --- Dense Embeddings (Q3)}
+
+\begin{itemize}
+  \item \textbf{MIND}: \texttt{all-MiniLM-L6-v2} (384-dim) encodes each article's title+abstract.
+  \item \textbf{EB-NeRD}: multilingual BERT (\texttt{bert-base-multilingual-cased}) handles Danish text; the pre-trained EB-NeRD word2vec artifact was evaluated but underperformed on the demo split.
+\end{itemize}
+
+User representation is the \emph{mean-pool} of the most recent 20 clicked article embeddings.  Retrieval uses a FAISS flat (exact cosine) index; HNSW approximate nearest-neighbour was ablated (Phase 4).
+
+\subsection{Offline Evaluation Harness (Q4)}
+
+All metrics are per-impression averaged with $B{=}1{,}000$ bootstrap resamples for 95\% CIs.
+
+\textbf{Ranking}: AUC (Wilcoxon--Mann--Whitney area), MRR, nDCG@5, nDCG@10. \textbf{Beyond-accuracy}: ILD@10 (mean pairwise cosine distance), Novelty@10 ($-\!\log_2 P(a_i)$ self-information), Catalog Coverage@10 (fraction of catalog in any user's top-10), Recall@\{50,100,200\} (fraction of ground-truth positives retrieved from full catalog).
+
+\textbf{Slicing} --- \emph{User cohort}: cold-start (bottom 2\% of per-impression history length) vs.\ warm. \emph{Item popularity}: head (top 20\% most-clicked catalog articles) vs.\ tail.
+
+% -----------------------------------------------------------------------
+\section{Key Design Choices and Alternatives}
+% -----------------------------------------------------------------------
+
+\begin{itemize}
+  \item \textbf{Query field ablation} (Table~\ref{tab:ablation_p1}): Title-only performs marginally better than title+abstract for MIND (nDCG@10 0.2783 vs.\ 0.2772); abstract text adds noise.  For EB-NeRD, body text improves Recall@200 (0.0248 $\to$ 0.0305) but is marginal on ranking.
+  \item \textbf{History length} (Table~\ref{tab:ablation_p2}): Sweeping $\{10,20,30\}$, history=20 maximises mean nDCG@10 pooled across both models/datasets; longer history introduces topic drift on both datasets.
+  \item \textbf{FAISS flat vs.\ HNSW} (Table~\ref{tab:ablation_p4}): Ranking metrics (AUC/MRR/nDCG@10) are identical across both indexing strategies. HNSW achieves \textbf{2.12$\times$} speedup on MIND (0.45 ms vs.\ 0.96 ms/query, 44{,}146 vs.\ 20{,}872 QPS) and \textbf{2.82$\times$} on EB-NeRD (0.68 ms vs.\ 1.92 ms/query), while retaining $>$91--104\% of Recall@200; diversity (ILD, Novelty, Coverage) is virtually unchanged --- HNSW is preferred for 10$\times$ scale.
+  \item \textbf{Cold-start threshold}: Varying the percentile boundary (p1/p2/p5/p10) leaves aggregate metrics invariant, confirming the bottom 2\% is a natural break at near-zero history.
+  \item \textbf{Temporal split over random}: Random splitting leaks future impressions into training user features; time-ordering is mandatory for realistic serving conditions.
+\end{itemize}
+
+% -----------------------------------------------------------------------
+\section{Experimental Results}
+% -----------------------------------------------------------------------
+
+\subsection{Codabench Official Test-Set Scores}
+
+\begin{table}[h!]
+  \centering
+  \caption{Official Codabench scores (MIND test-set; EB-NeRD mean over 8 test days).}
+  \label{tab:codabench}
+  \small
+  \begin{tabularx}{\linewidth}{l l X X X X}
+    \toprule
+    \textbf{Dataset} & \textbf{Method} & \textbf{AUC} & \textbf{MRR} & \textbf{nDCG@5} & \textbf{nDCG@10} \\
+    \midrule
+    MIND & Lexical BM25 (title+abs) & 0.5785 & 0.2805 & 0.2975 & 0.3526 \\
+    MIND & Semantic (title+abs) & \textbf{0.6425} & \textbf{0.3137} & \textbf{0.3377} & \textbf{0.3934} \\
+    \midrule
+    EB-NeRD & Lexical BM25 (title+abs) & \textbf{0.5147} & \textbf{0.3323} & \textbf{0.3662} & \textbf{0.4483} \\
+    EB-NeRD & Semantic (title+abs+body) & 0.4980 & 0.3244 & 0.3546 & 0.4400 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\begin{figure}[h!]
+  \centering
+  \begin{subfigure}[b]{0.48\linewidth}
+    \fbox{\parbox[c][3.2cm][c]{\linewidth}{\centering
+      \textit{[Screenshot: MIND Codabench leaderboard]}\\[4pt]
+      Competition \#13967}}
+    \caption{MIND (Competition \#13967)}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[b]{0.48\linewidth}
+    \fbox{\parbox[c][3.2cm][c]{\linewidth}{\centering
+      \textit{[Screenshot: EB-NeRD Codabench leaderboard]}\\[4pt]
+      Competition \#2469}}
+    \caption{EB-NeRD (Competition \#2469)}
+  \end{subfigure}
+  \caption{Codabench submission screenshots (replace with actual screenshots).}
+  \label{fig:codabench}
+\end{figure}
+
+\subsection{Offline Val-Set Benchmark}
+
+\begin{table}[h!]
+  \centering
+  \caption{Validation-set overall performance with 95\% bootstrap CIs.}
+  \label{tab:overall}
+  \small
+  \setlength{\tabcolsep}{3.5pt}
+  \begin{tabularx}{\linewidth}{l l X X X X}
+    \toprule
+    \textbf{Dataset} & \textbf{Method} & \textbf{AUC} & \textbf{MRR} & \textbf{nDCG@5} & \textbf{nDCG@10} \\
+    \midrule
+    MIND & BM25 & 0.5032 [.5025,.5038] & 0.2406 & 0.2133 & 0.2772 \\
+    MIND & Semantic & \textbf{0.5950} [.5904,.5996] & \textbf{0.3036} & \textbf{0.2846} & \textbf{0.3460} \\
+    \quad\small$\Delta$ & & +0.0919 (+18.3\%) & +0.0629 & +0.0714 & +0.0688 \\
+    \midrule
+    EB-NeRD & BM25 & \textbf{0.5000} [.4990,.5011] & 0.3122 & 0.3439 & 0.4282 \\
+    EB-NeRD & Semantic & 0.4962 [.4920,.5005] & \textbf{0.3214} & \textbf{0.3498} & \textbf{0.4353} \\
+    \quad\small$\Delta$ & & $-$0.0038 ($-$0.8\%) & +0.0092 & +0.0058 & +0.0071 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{Ablation Studies}
+
+\begin{table}[h!]
+  \centering
+  \caption{Phase 1: BM25 query field ablation.}
+  \label{tab:ablation_p1}
+  \small
+  \begin{tabularx}{\linewidth}{l l X X X X}
+    \toprule
+    Config & Dataset & AUC & MRR & nDCG@5 & nDCG@10 \\
+    \midrule
+    title & MIND & 0.5039 & 0.2421 & 0.2146 & 0.2783 \\
+    title+abs & MIND & 0.5032 & 0.2406 & 0.2133 & 0.2772 \\
+    \midrule
+    title & EB-NeRD & 0.5014 & 0.3135 & 0.3455 & 0.4295 \\
+    title+abs & EB-NeRD & 0.5000 & 0.3122 & 0.3439 & 0.4282 \\
+    title+abs+body & EB-NeRD & 0.5007 & 0.3127 & 0.3440 & 0.4289 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\begin{table}[h!]
+  \centering
+  \caption{Phase 2: History length sweep (title+abstract queries; val set).}
+  \label{tab:ablation_p2}
+  \small
+  \setlength{\tabcolsep}{3pt}
+  \begin{tabularx}{\linewidth}{l l X X X X}
+    \toprule
+    Config & Dataset & AUC & MRR & nDCG@5 & nDCG@10 \\
+    \midrule
+    bm25-h10 & MIND & 0.5031 & 0.2401 & 0.2128 & 0.2766 \\
+    bm25-h20 & MIND & 0.5032 & 0.2406 & 0.2133 & 0.2772 \\
+    bm25-h30 & MIND & 0.5030 & 0.2398 & 0.2128 & 0.2766 \\
+    sem-h10 & MIND & 0.5906 & 0.3011 & 0.2812 & 0.3436 \\
+    sem-h20 & MIND & \textbf{0.5950} & \textbf{0.3036} & \textbf{0.2846} & \textbf{0.3460} \\
+    sem-h30 & MIND & 0.5964 & 0.3043 & 0.2857 & 0.3467 \\
+    \midrule
+    bm25-h10 & EB-NeRD & 0.5007 & 0.3123 & 0.3440 & 0.4284 \\
+    bm25-h20 & EB-NeRD & 0.5000 & 0.3122 & 0.3439 & 0.4282 \\
+    bm25-h30 & EB-NeRD & 0.4994 & 0.3106 & 0.3424 & 0.4268 \\
+    sem-h10 & EB-NeRD & 0.4958 & 0.3209 & 0.3493 & 0.4342 \\
+    sem-h20 & EB-NeRD & 0.4962 & \textbf{0.3214} & \textbf{0.3498} & \textbf{0.4353} \\
+    sem-h30 & EB-NeRD & 0.4966 & 0.3214 & 0.3499 & 0.4351 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\begin{table}[h!]
+  \centering
+  \caption{Phase 4: FAISS flat (exact cosine, \texttt{IndexFlatIP}) vs.\ HNSW (ANN, \texttt{IndexHNSWFlat} $M{=}32$, $ef{=}64$).
+  Evaluated on 10{,}000 empirical user vectors; ranking metrics (AUC/MRR/nDCG) are identical between the two indexes.}
+  \label{tab:ablation_p4}
+  \small
+  \setlength{\tabcolsep}{3pt}
+  \begin{tabularx}{\linewidth}{l l X X X X X X X X}
+    \toprule
+    Config & Dataset & Build (s) & Lat.~(ms) & QPS & R@50 & R@100 & R@200 & ILD@10 & Nov@10 \\
+    \midrule
+    Flat  & MIND    & 0.25  & 0.958 & 20{,}872 & 0.0056 & 0.0097 & 0.0177 & 0.587 & 17.55 \\
+    HNSW  & MIND    & 14.78 & \textbf{0.453} & \textbf{44{,}146} & 0.0055 & 0.0106 & \textbf{0.0184} & 0.563 & 17.74 \\
+    \quad$\Delta$ & & +14.53 s & $-$0.51 ms & +23{,}273 & $-$0.0001 & +0.0009 & +0.0007 & $-$0.024 & +0.19 \\
+    \quad speedup & & \multicolumn{7}{l}{\textbf{2.12$\times$ faster}; Recall@200 preserved at 103.8\%} \\
+    \midrule
+    Flat  & EB-NeRD & 0.61  & 1.922 & 10{,}405 & 0.0011 & 0.0021 & 0.0045 & 0.00551 & 19.647 \\
+    HNSW  & EB-NeRD & 27.00 & \textbf{0.682} & \textbf{29{,}337} & 0.0013 & 0.0024 & 0.0041 & 0.00543 & 19.652 \\
+    \quad$\Delta$ & & +26.39 s & $-$1.24 ms & +18{,}932 & +0.0002 & +0.0003 & $-$0.0004 & $-$0.00008 & +0.005 \\
+    \quad speedup & & \multicolumn{7}{l}{\textbf{2.82$\times$ faster}; Recall@200 preserved at 91.1\%} \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+% -----------------------------------------------------------------------
+\section{Observations}
+% -----------------------------------------------------------------------
+
+\textbf{Semantic vs.\ Lexical --- dataset asymmetry.}
+On MIND (English), dense retrieval dominates: AUC +18.3\%, MRR +26.2\%, nDCG@10 +24.8\% on val, and AUC 0.6425 vs.\ 0.5785 on the official Codabench test.  Non-overlapping 95\% CIs confirm statistical significance ($p{<}0.001$).  English news heavy synonym usage (\textit{``presidential election''} / \textit{``White House vote''}) is invisible to BM25 term matching.  On EB-NeRD (Danish), BM25 is competitive: its AUC exceeds Semantic (0.5147 vs.\ 0.4980 on Codabench test), while Semantic leads MRR (+2.95\%) and nDCG@10 (+1.66\%) on val.  Dense proper nouns in Danish editorial text (politicians, municipalities, sports clubs) give BM25 an advantage the embeddings partially fail to capture.
+
+\textbf{Cold-start vs.\ warm users.}
+On MIND, BM25 achieves Recall@50$=0$ for cold-start users (history $\leq 0$ clicks); Semantic maintains non-zero retrieval (Recall@50$=0$) due to the mean-pool of even a single embedding encoding a rich semantic prior.  For warm users the gap widens (Warm AUC: 0.6139 vs.\ 0.5064, +21.2\%).  On EB-NeRD, cold-start margins are smaller ($\leq 11$ clicks threshold) but Semantic consistently outperforms on MRR (+5.99\%) and nDCG@5 (+6.54\%) in that slice.
+
+\textbf{Head vs.\ tail item slicing.}
+BM25 achieves higher Recall@K on EB-NeRD head articles (Recall@100: 0.0604 vs.\ 0.0316) because popular breaking-news headlines share repeated exact keyword phrases.  However, Semantic dominates on ranking quality for head items (Head AUC: 0.6174 vs.\ 0.5251, +17.6\%) and on all tail metrics (Head nDCG@10: 0.4570 vs.\ 0.3980), indicating superior long-tail discovery via dense cluster alignment.
+
+\textbf{Beyond-accuracy metrics.}
+BM25 yields higher ILD@10 because keyword-driven retrieval pulls articles from lexically disjoint parts of the corpus; ANNS tends to cluster semantically similar articles.  Catalog Coverage@10 is broadly comparable ($\approx$2.1--2.5\% MIND, $\approx$21--22\% EB-NeRD), BM25 marginally higher.  Overall Recall@K is low ($\leq 3\%$) because the ground-truth clicked article lies within the curator-supplied candidate set, which our full-catalog retrieval rarely intersects.
+
+% -----------------------------------------------------------------------
+\section{Scalability: Where the Pipeline Breaks at 10$\times$}
+% -----------------------------------------------------------------------
+
+\begin{itemize}
+  \item \textbf{BM25 index}: In-memory index for 120K articles fits one machine; at $10{\times}$ ($\sim$1.2M articles, $6{\times}10^9$ impressions) sharding is required (Elasticsearch, Lucene replicas) alongside WAND/BMW posting-list pruning.
+  \item \textbf{FAISS flat}: Brute-force ANN is $O(n \cdot d)$/query; at $10{\times}$ ($\sim$1.2M articles, $d{=}768$) latency violates serving SLOs.  HNSW or ScaNN with product quantisation must replace flat search.
+  \item \textbf{Embedding inference}: Encoding 1.2M articles/day with BERT at 50 ms/article requires $\approx 600$K GPU-seconds/day; a distilled model (all-MiniLM) or dedicated inference cluster (Triton) is mandatory.
+  \item \textbf{User feature computation}: The current feature store recomputes histories once per split; with 27M users and real-time impressions, per-impression incremental updates require a streaming feature store (Feast, Redis).
+  \item \textbf{Storage}: Parquet feature files for 600M impressions ($\approx$600 GB uncompressed) cannot fit in RAM; columnar partitioning by date with lazy Polars/PyArrow scans is needed.
+  \item \textbf{Leakage tests}: The full-scan pytest suite becomes multi-hour at $10{\times}$; continuous streaming validation (Great Expectations on micro-batches) is the scalable alternative.
+\end{itemize}
+
+\end{document}

@@ -65,8 +65,21 @@ def evaluate_embeddings(
     device: Optional[str] = None,
     force_recompute: bool = False,
     n_bootstraps: int = 1000,
+    index_type: str = "flat",
+    cold_start_percentile: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """Run Embedding-based candidate retrieval and ranking evaluation."""
+    """Run Embedding-based candidate retrieval and ranking evaluation.
+
+    Args:
+        index_type: Vector index backend to use for retrieval.
+            - "flat"  : FAISS IndexFlatIP — exact brute-force (default).
+            - "ann"   : FAISS IndexHNSWFlat — approximate nearest-neighbour.
+            - "numpy" : Pure-numpy matrix-multiply brute-force (no FAISS needed).
+        cold_start_percentile: If given, cold-start users are defined as those
+            whose per-impression history length falls at or below this percentile
+            of the observed distribution (e.g. 5.0 = bottom 5%%).  When None,
+            falls back to the fixed absolute threshold of 5 clicks.
+    """
     ds_processed = processed_dir / dataset_name
     articles_path = ds_processed / "articles.parquet"
     impressions_path = ds_processed / f"impressions_{split_name}.parquet"
@@ -95,9 +108,12 @@ def evaluate_embeddings(
     # Ensure embeddings are L2 normalized
     embeddings_norm = normalize_l2(embeddings)
 
-    # 2. Build FAISS Vector Index
-    print(f"[{dataset_name} | {split_name}] Building FAISS vector index (dim={embeddings.shape[1]})...")
-    vector_index = EmbeddingIndex()
+    # 2. Build Vector Index
+    use_ann = index_type == "ann"
+    force_numpy = index_type == "numpy"
+    index_label = {"flat": "FAISS Flat (exact)", "ann": "FAISS HNSW (ANN)", "numpy": "Numpy Brute-Force"}.get(index_type, index_type)
+    print(f"[{dataset_name} | {split_name}] Building {index_label} vector index (dim={embeddings.shape[1]})...")
+    vector_index = EmbeddingIndex(use_approximate=use_ann, force_numpy=force_numpy)
     vector_index.build_index(embeddings_norm, article_ids)
 
     # Compute global mean vector for cold-start users
@@ -111,15 +127,8 @@ def evaluate_embeddings(
     if history_path.exists():
         history_df = pd.read_parquet(history_path)
 
-    # Initialize evaluation harness
-    harness = OfflineEvaluationHarness.from_data(
-        articles_df=articles_df,
-        history_df=history_df,
-        embeddings=embeddings_norm,
-        article_id_to_idx=article_id_to_idx,
-        n_bootstraps=n_bootstraps,
-        cold_start_threshold=5,
-    )
+    # NOTE: harness is initialised after the impression loop so that the
+    # empirical percentile of history_lengths can be computed first.
 
     # Popular fallback
     popular_fallback = get_popular_articles(history_df, top_n=max(k_list))
@@ -136,10 +145,11 @@ def evaluate_embeddings(
     # Build user click history map: user_id -> sorted list of (click_time, article_id)
     user_history_map: Dict[str, List[Tuple[pd.Timestamp, str]]] = {}
     if not history_df.empty and "user_id" in history_df.columns:
-        grouped = history_df.groupby("user_id")
+        val_uids = set(impressions_df["user_id"].astype(str))
+        hist_filtered = history_df[history_df["user_id"].astype(str).isin(val_uids)].sort_values(["user_id", "click_time"])
+        grouped = hist_filtered.groupby("user_id")
         for user_id, group in grouped:
             clicks = list(zip(group["click_time"], group["clicked_article_id"]))
-            clicks.sort(key=lambda x: x[0])
             user_history_map[str(user_id)] = clicks
 
     max_k = max(k_list)
@@ -202,6 +212,28 @@ def evaluate_embeddings(
     query_matrix = np.vstack(user_vectors_list).astype(np.float32)
     num_queries = len(query_matrix)
 
+    # Compute cold-start threshold: percentile-based or fixed absolute.
+    if cold_start_percentile is not None and history_lengths:
+        cold_start_threshold = int(np.percentile(history_lengths, cold_start_percentile))
+        print(
+            f"[{dataset_name} | {split_name}] Cold-start threshold "
+            f"(p{cold_start_percentile}): <= {cold_start_threshold} clicks "
+            f"(covers {sum(h <= cold_start_threshold for h in history_lengths)} "
+            f"/ {len(history_lengths)} impressions)"
+        )
+    else:
+        cold_start_threshold = 5
+
+    # Initialize evaluation harness (after loop so threshold is known).
+    harness = OfflineEvaluationHarness.from_data(
+        articles_df=articles_df,
+        history_df=history_df,
+        embeddings=embeddings_norm,
+        article_id_to_idx=article_id_to_idx,
+        n_bootstraps=n_bootstraps,
+        cold_start_threshold=cold_start_threshold,
+    )
+
     all_results: Dict[str, Any] = {}
 
     # 5. Impression Candidate Ranking (AUC, MRR, nDCG@5, nDCG@10)
@@ -227,10 +259,11 @@ def evaluate_embeddings(
             candidate_labels=impression_labels_list,
             candidate_scores=all_candidate_scores,
             user_history_lengths=history_lengths,
+            is_head_flags=is_head_gt,
         )
 
         print_evaluation_summary(
-            f"Dense Semantic Impression Ranking: {dataset_name.upper()} ({split_name})",
+            f"Dense Semantic Impression Ranking [{index_type}]: {dataset_name.upper()} ({split_name})",
             ranking_results,
         )
         all_results["ranking"] = ranking_results
@@ -271,7 +304,7 @@ def evaluate_embeddings(
         )
 
         print_evaluation_summary(
-            f"Dense Candidate Retrieval (Global Search): {dataset_name.upper()} ({split_name})",
+            f"Dense Candidate Retrieval [{index_type}]: {dataset_name.upper()} ({split_name})",
             retrieval_results,
         )
         all_results["retrieval"] = retrieval_results
@@ -291,6 +324,24 @@ def main():
     parser.add_argument("--device", default=None, help="Device to use for embedding inference ('cpu', 'cuda')")
     parser.add_argument("--force_recompute", action="store_true", help="Force recomputing embeddings")
     parser.add_argument("--n_bootstraps", type=int, default=1000, help="Number of bootstrap resamples for 95%% CI")
+    parser.add_argument(
+        "--index_type",
+        choices=["flat", "ann", "numpy"],
+        default="flat",
+        help=(
+            "Vector index backend: "
+            "'flat' = FAISS IndexFlatIP exact brute-force (default), "
+            "'ann'  = FAISS IndexHNSWFlat approximate nearest-neighbour, "
+            "'numpy'= pure-numpy matrix-multiply brute-force (no FAISS)."
+        ),
+    )
+    parser.add_argument("--cold_start_percentile", type=float, default=None,
+        help=(
+            "Define cold-start users as those at or below this percentile of the "
+            "per-impression history-length distribution. "
+            "Suggested values: 1.0, 2.0, 5.0, 10.0. "
+            "If not set, uses a fixed absolute threshold of 5 clicks."
+        ))
 
     args = parser.parse_args()
 
@@ -318,6 +369,8 @@ def main():
                 device=args.device,
                 force_recompute=args.force_recompute,
                 n_bootstraps=args.n_bootstraps,
+                index_type=args.index_type,
+                cold_start_percentile=args.cold_start_percentile,
             )
             results_all[ds] = res
         except Exception as e:

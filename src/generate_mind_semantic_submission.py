@@ -30,11 +30,22 @@ from tqdm import tqdm
 # Ensure src is in sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from embeddings import (
+    EmbeddingIndex,
     compute_article_embeddings_hf,
     compute_user_representation,
     normalize_l2,
 )
 from metrics import compute_auc, compute_mrr, compute_ndcg_at_k
+
+
+def fast_ordinal_ranks(scores: List[float]) -> str:
+    """Compute 1-based ranks where rank 1 corresponds to highest score."""
+    n = len(scores)
+    order = sorted(range(n), key=lambda idx: scores[idx], reverse=True)
+    ranks = [0] * n
+    for r, idx in enumerate(order, 1):
+        ranks[idx] = r
+    return ",".join(map(str, ranks))
 
 
 def get_or_compute_embeddings(
@@ -240,8 +251,7 @@ def generate_submission(
                 ]
 
                 # Compute ranks: highest score gets rank 1
-                ranks = rankdata(-np.array(cand_scores, dtype=np.float32), method="ordinal")
-                rank_str = ",".join(str(int(r)) for r in ranks)
+                rank_str = fast_ordinal_ranks(cand_scores)
                 buffer.append(f"{raw_impr_id} [{rank_str}]\n")
 
             if len(buffer) >= chunk_size:
@@ -317,6 +327,11 @@ def main():
         force_recompute=args.force_recompute,
     )
     global_mean_vector = normalize_l2(np.mean(embeddings, axis=0))
+
+    # Build FAISS HNSW Index for approximate nearest neighbor retrieval
+    print(f"Building FAISS HNSW index over {len(article_ids):,} articles (dim={embeddings.shape[1]})...")
+    hnsw_index = EmbeddingIndex(use_approximate=True)
+    hnsw_index.build_index(embeddings, article_ids)
 
     # 2. Evaluate on Dev if requested
     if args.eval_dev and dev_impr_path.exists():

@@ -57,13 +57,14 @@ class FastBM25Scorer:
         self.doc_weights: Dict[str, Dict[str, float]] = {}  # doc_id -> {token: doc_term_weight}
         self.idf: Dict[str, float] = {}  # token -> idf
         self.doc_titles: Dict[str, str] = {}
+        self.doc_texts: Dict[str, str] = {}
         self.doc_lengths: Dict[str, int] = {}
         self.avgdl: float = 0.0
         self.num_docs: int = 0
 
-    def fit(self, articles_df: pd.DataFrame) -> None:
+    def fit(self, articles_df: pd.DataFrame, history_fields: str = "title_abstract") -> None:
         """Index articles (title + abstract) and precompute term weights."""
-        print(f"Building FastBM25 index over {len(articles_df)} articles...")
+        print(f"Building FastBM25 index over {len(articles_df)} articles (history_fields: {history_fields})...")
         self.num_docs = len(articles_df)
         df_counts: Dict[str, int] = Counter()
         doc_tokens_map: Dict[str, List[str]] = {}
@@ -77,8 +78,15 @@ class FastBM25Scorer:
             else [""] * self.num_docs
         )
 
+        norm_fields = str(history_fields).lower().replace("+", "_").replace(" ", "_")
+        include_abstract_in_query = norm_fields in ("title_abstract", "title_and_abstract", "both", "abstract_title")
+
         for aid, title, abstract in zip(article_ids, titles, abstracts):
             self.doc_titles[aid] = title
+            if include_abstract_in_query:
+                self.doc_texts[aid] = f"{title} {abstract}".strip()
+            else:
+                self.doc_texts[aid] = title.strip()
             full_text = f"{title} {abstract}".strip()
             tokens = tokenize(full_text)
             doc_len = len(tokens)
@@ -189,7 +197,7 @@ def evaluate_dev_split(
             continue
 
         recent_clicks = user_history_map.get(user_id, [])
-        q_text = " ".join([scorer.doc_titles.get(aid, "") for aid in recent_clicks if aid in scorer.doc_titles])
+        q_text = " ".join([scorer.doc_texts.get(aid, "") for aid in recent_clicks if aid in scorer.doc_texts])
         q_tokens = tokenize(q_text)
 
         cand_scores = scorer.score_candidates(q_tokens, cands)
@@ -264,7 +272,7 @@ def generate_submission(
                 user_id = user_ids[i]
 
                 recent_clicks = user_history_map.get(user_id, [])
-                q_text = " ".join([scorer.doc_titles.get(aid, "") for aid in recent_clicks if aid in scorer.doc_titles])
+                q_text = " ".join([scorer.doc_texts.get(aid, "") for aid in recent_clicks if aid in scorer.doc_texts])
                 q_tokens = tokenize(q_text)
 
                 cand_scores = scorer.score_candidates(q_tokens, cands)
@@ -317,6 +325,12 @@ def main():
     parser = argparse.ArgumentParser(description="Generate MIND Codabench BM25 submission.")
     parser.add_argument("--dataset_type", choices=["small", "large"], default="large", help="Dataset scale")
     parser.add_argument("--eval_dev", action="store_true", help="Evaluate BM25 ranking on dev split")
+    parser.add_argument(
+        "--history_fields",
+        choices=["title", "title_abstract", "title+abstract", "both"],
+        default="title_abstract",
+        help="Fields from history articles in query: 'title' or 'title_abstract' / 'title+abstract' (default: title_abstract)",
+    )
     parser.add_argument("--output_dir", default="submissions", help="Output directory for submission zip")
     parser.add_argument("--max_history_len", type=int, default=20, help="Max recent articles for query")
     args = parser.parse_args()
@@ -334,7 +348,7 @@ def main():
     # 1. Load articles and fit BM25 Scorer
     articles_df = pd.read_parquet(articles_path)
     scorer = FastBM25Scorer()
-    scorer.fit(articles_df)
+    scorer.fit(articles_df, history_fields=args.history_fields)
 
     # 2. Evaluate on Dev if requested
     if args.eval_dev and dev_impr_path.exists():

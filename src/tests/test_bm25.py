@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from bm25 import BM25InvertedIndex, default_tokenize
+from bm25 import BM25InvertedIndex, create_article_text_map, default_tokenize
 from eval_bm25 import calculate_recall_at_k
 
 
@@ -70,3 +70,55 @@ def test_calculate_recall_at_k():
     # Recall@5: top 5 retrieved = {"art_1", "art_2", "art_3", "art_4", "art_5"}. Intersection = {"art_2", "art_5"} (2 hits out of 3 GT)
     recall_5 = calculate_recall_at_k(retrieved, ground_truth, k=5)
     assert pytest.approx(recall_5, 0.01) == 2 / 3
+
+
+def test_create_article_text_map():
+    articles_data = [
+        {"article_id": "art_1", "title": "Quantum Computing", "abstract": "Introduction to qubits and superposition"},
+        {"article_id": "art_2", "title": "Climate Change", "abstract": "Global warming and carbon emissions"},
+    ]
+    df = pd.DataFrame(articles_data)
+
+    # 1. Title only
+    title_map = create_article_text_map(df, fields="title")
+    assert title_map["art_1"] == "Quantum Computing"
+    assert title_map["art_2"] == "Climate Change"
+
+    # 2. Title + Abstract
+    both_map = create_article_text_map(df, fields="title_abstract")
+    assert both_map["art_1"] == "Quantum Computing Introduction to qubits and superposition"
+    assert both_map["art_2"] == "Climate Change Global warming and carbon emissions"
+
+    # 3. Alias title+abstract
+    plus_map = create_article_text_map(df, fields="title+abstract")
+    assert plus_map["art_1"] == "Quantum Computing Introduction to qubits and superposition"
+    assert plus_map["art_2"] == "Climate Change Global warming and carbon emissions"
+
+
+def test_bm25_history_query_title_vs_abstract():
+    articles_data = [
+        {"article_id": "art_1", "title": "Space Exploration", "abstract": "Mars rover and NASA missions"},
+        {"article_id": "art_2", "title": "Deep Ocean", "abstract": "Marine life in Mariana Trench"},
+        {"article_id": "art_3", "title": "Red Planet Journey", "abstract": "A journey to Mars"},
+    ]
+    df = pd.DataFrame(articles_data)
+    index = BM25InvertedIndex()
+    index.build_index(df)
+
+    history = ["art_1"]
+    
+    # Query using title only: "Space Exploration"
+    title_map = create_article_text_map(df, fields="title")
+    q_title = " ".join([title_map[aid] for aid in history])
+    res_title = index.search(q_title, top_k=3)
+    retrieved_title_ids = [aid for aid, _ in res_title]
+    assert "art_1" in retrieved_title_ids
+
+    # Query using title + abstract: contains "Mars rover NASA"
+    both_map = create_article_text_map(df, fields="title_abstract")
+    q_both = " ".join([both_map[aid] for aid in history])
+    assert "mars" in q_both.lower()
+    res_both = index.search(q_both, top_k=3)
+    retrieved_both_ids = [aid for aid, _ in res_both]
+    # art_3 has "Mars" in abstract, so it gets retrieved with high score when history query includes abstract
+    assert "art_3" in retrieved_both_ids

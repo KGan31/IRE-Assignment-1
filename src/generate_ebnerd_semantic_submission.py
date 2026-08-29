@@ -31,6 +31,7 @@ from tqdm import tqdm
 # Ensure src is in sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from embeddings import (
+    EmbeddingIndex,
     compute_article_embeddings_hf,
     compute_user_representation,
     load_ebnerd_pretrained_embeddings,
@@ -445,6 +446,11 @@ def main():
         force_recompute=args.force_recompute,
     )
     global_mean_vector = normalize_l2(np.mean(embeddings, axis=0))
+
+    # Build FAISS HNSW Index for approximate nearest neighbor retrieval
+    print(f"Building FAISS HNSW index over {len(article_ids):,} articles (dim={embeddings.shape[1]})...")
+    hnsw_index = EmbeddingIndex(use_approximate=True)
+    hnsw_index.build_index(embeddings, article_ids)
 
     # 2. Compute article popularity if requested
     pop_map = None

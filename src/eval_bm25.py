@@ -28,7 +28,7 @@ import pandas as pd
 import yaml
 from tqdm import tqdm
 
-from bm25 import BM25InvertedIndex
+from bm25 import BM25InvertedIndex, create_article_text_map
 from eval_harness import OfflineEvaluationHarness, print_evaluation_summary
 from metrics import compute_recall_at_k
 
@@ -55,8 +55,30 @@ def evaluate_bm25(
     k_list: List[int] = [50, 100, 200],
     batch_size: int = 2000,
     n_bootstraps: int = 1000,
+    k1: float = 1.5,
+    b: float = 0.75,
+    cold_start_percentile: Optional[float] = None,
+    history_fields: str = "title_abstract",
+    include_body: bool = False,
 ) -> Dict[str, Any]:
-    """Run BM25 candidate retrieval and ranking evaluation."""
+    """Run BM25 candidate retrieval and ranking evaluation.
+
+    Args:
+        k1: BM25 term-frequency saturation (default 1.5).
+            Higher values slow down TF saturation, favouring documents with
+            many repeated query terms.
+        b: BM25 document-length normalisation (default 0.75).
+            0 = no normalisation; 1 = full normalisation.
+        cold_start_percentile: If given, cold-start users are defined as those
+            whose per-impression history length falls at or below this percentile
+            of the observed distribution (e.g. 5.0 = bottom 5%%).  When None,
+            falls back to the fixed absolute threshold of 5 clicks.
+        history_fields: Fields from user history articles to include in query
+            ('title' or 'title_abstract' / 'title+abstract').
+        include_body: If True, include body text in the BM25 document INDEX
+            (title + abstract/subtitle + body).  Only meaningful for EB-NeRD
+            which supplies a 'body' column; silently ignored on MIND.
+    """
     ds_processed = processed_dir / dataset_name
     articles_path = ds_processed / "articles.parquet"
     impressions_path = ds_processed / f"impressions_{split_name}.parquet"
@@ -73,11 +95,11 @@ def evaluate_bm25(
     # 1. Load articles and build BM25 index
     print(f"[{dataset_name} | {split_name}] Loading articles from {articles_path}...")
     articles_df = pd.read_parquet(articles_path)
-    title_map: Dict[str, str] = dict(zip(articles_df["article_id"], articles_df["title"].fillna("")))
+    article_text_map: Dict[str, str] = create_article_text_map(articles_df, fields=history_fields)
 
-    print(f"[{dataset_name} | {split_name}] Building BM25 index ({len(articles_df)} articles)...")
-    bm25_index = BM25InvertedIndex()
-    bm25_index.build_index(articles_df)
+    print(f"[{dataset_name} | {split_name}] Building BM25 index ({len(articles_df)} articles, k1={k1}, b={b}, body={include_body})...")
+    bm25_index = BM25InvertedIndex(k1=k1, b=b)
+    bm25_index.build_index(articles_df, include_body=include_body)
 
     # 2. Load history & impressions
     print(f"[{dataset_name} | {split_name}] Loading impressions from {impressions_path}...")
@@ -96,15 +118,8 @@ def evaluate_bm25(
         except Exception:
             pass
 
-    # Initialize evaluation harness
-    harness = OfflineEvaluationHarness.from_data(
-        articles_df=articles_df,
-        history_df=history_df,
-        embeddings=embeddings,
-        article_id_to_idx=article_id_to_idx,
-        n_bootstraps=n_bootstraps,
-        cold_start_threshold=5,
-    )
+    # NOTE: harness is initialised after the impression loop so that the
+    # empirical percentile of history_lengths can be computed first.
 
     # Compute popular fallback articles
     popular_fallback = get_popular_articles(history_df, top_n=max(k_list))
@@ -121,16 +136,17 @@ def evaluate_bm25(
     # Build user click history map: user_id -> sorted list of (click_time, article_id)
     user_history_map: Dict[str, List[Tuple[pd.Timestamp, str]]] = {}
     if not history_df.empty and "user_id" in history_df.columns:
-        grouped = history_df.groupby("user_id")
+        val_uids = set(impressions_df["user_id"].astype(str))
+        hist_filtered = history_df[history_df["user_id"].astype(str).isin(val_uids)].sort_values(["user_id", "click_time"])
+        grouped = hist_filtered.groupby("user_id")
         for user_id, group in grouped:
             clicks = list(zip(group["click_time"], group["clicked_article_id"]))
-            clicks.sort(key=lambda x: x[0])
             user_history_map[str(user_id)] = clicks
 
     max_k = max(k_list)
 
     # 3. Construct queries for all impressions
-    print(f"[{dataset_name} | {split_name}] Preparing queries for {len(impressions_df)} impressions...")
+    print(f"[{dataset_name} | {split_name}] Preparing queries (using history fields: {history_fields}) for {len(impressions_df)} impressions...")
     queries: List[str] = []
     ground_truths: List[Set[str]] = []
     history_lengths: List[int] = []
@@ -173,9 +189,31 @@ def evaluate_bm25(
         recent_clicks = prior_clicks[-max_history_len:] if prior_clicks else []
         history_lengths.append(len(recent_clicks))
 
-        query_titles = [title_map.get(aid, "") for aid in recent_clicks if aid in title_map]
-        q_text = " ".join([t for t in query_titles if t]).strip()
+        query_texts = [article_text_map.get(aid, "") for aid in recent_clicks if aid in article_text_map]
+        q_text = " ".join([t for t in query_texts if t]).strip()
         queries.append(q_text)
+
+    # Compute cold-start threshold: percentile-based or fixed absolute.
+    if cold_start_percentile is not None and history_lengths:
+        cold_start_threshold = int(np.percentile(history_lengths, cold_start_percentile))
+        print(
+            f"[{dataset_name} | {split_name}] Cold-start threshold "
+            f"(p{cold_start_percentile}): <= {cold_start_threshold} clicks "
+            f"(covers {sum(h <= cold_start_threshold for h in history_lengths)} "
+            f"/ {len(history_lengths)} impressions)"
+        )
+    else:
+        cold_start_threshold = 5
+
+    # Initialize evaluation harness (after loop so threshold is known).
+    harness = OfflineEvaluationHarness.from_data(
+        articles_df=articles_df,
+        history_df=history_df,
+        embeddings=embeddings,
+        article_id_to_idx=article_id_to_idx,
+        n_bootstraps=n_bootstraps,
+        cold_start_threshold=cold_start_threshold,
+    )
 
     num_queries = len(queries)
     all_results: Dict[str, Any] = {}
@@ -207,6 +245,7 @@ def evaluate_bm25(
             candidate_labels=impression_labels_list,
             candidate_scores=all_candidate_scores,
             user_history_lengths=history_lengths,
+            is_head_flags=is_head_gt,
         )
 
         print_evaluation_summary(
@@ -259,6 +298,25 @@ def main():
     parser.add_argument("--max_history_len", type=int, default=20, help="Max recent clicked articles for user query")
     parser.add_argument("--eval_mode", choices=["all", "global", "impression"], default="all", help="Evaluation mode (all, global, impression)")
     parser.add_argument("--n_bootstraps", type=int, default=1000, help="Number of bootstrap resamples for 95%% CI")
+    parser.add_argument("--k1", type=float, default=1.5,
+        help="BM25 k1 parameter (term-frequency saturation). Suggested sweep: 0.5, 1.0, 1.5, 2.0, 3.0")
+    parser.add_argument("--b", type=float, default=0.75,
+        help="BM25 b parameter (document-length normalisation). Suggested sweep: 0.0, 0.25, 0.5, 0.75, 1.0")
+    parser.add_argument("--history_fields",
+        choices=["title", "title_abstract", "title+abstract", "both"],
+        default="title_abstract",
+        help="Fields from history articles to include in query: 'title' or 'title_abstract' / 'title+abstract' (default: title_abstract)",
+    )
+    parser.add_argument("--cold_start_percentile", type=float, default=None,
+        help=(
+            "Define cold-start users as those at or below this percentile of the "
+            "per-impression history-length distribution. "
+            "Suggested values: 1.0, 2.0, 5.0, 10.0. "
+            "If not set, uses a fixed absolute threshold of 5 clicks."
+        ))
+    parser.add_argument("--include_body", action="store_true",
+        help="Include article body text in the BM25 INDEX (title+abstract+body). "
+             "Only effective for EB-NeRD which has a 'body' column.")
 
     args = parser.parse_args()
 
@@ -280,6 +338,11 @@ def main():
                 max_history_len=args.max_history_len,
                 eval_mode=args.eval_mode,
                 n_bootstraps=args.n_bootstraps,
+                k1=args.k1,
+                b=args.b,
+                cold_start_percentile=args.cold_start_percentile,
+                history_fields=args.history_fields,
+                include_body=args.include_body,
             )
             results_all[ds] = res
         except Exception as e:
