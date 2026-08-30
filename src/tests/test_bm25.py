@@ -122,3 +122,50 @@ def test_bm25_history_query_title_vs_abstract():
     retrieved_both_ids = [aid for aid, _ in res_both]
     # art_3 has "Mars" in abstract, so it gets retrieved with high score when history query includes abstract
     assert "art_3" in retrieved_both_ids
+
+
+def test_bm25_cold_start_popularity_fallback_batch():
+    articles_data = [
+        {"article_id": "art_1", "title": "Article One", "abstract": "Content one"},
+        {"article_id": "art_2", "title": "Article Two", "abstract": "Content two"},
+        {"article_id": "art_3", "title": "Article Three", "abstract": "Content three"},
+    ]
+    df = pd.DataFrame(articles_data)
+    index = BM25InvertedIndex()
+    index.build_index(df)
+
+    popular_ids = ["art_2", "art_3", "art_1"]
+
+    # Cold start query: empty string "" (user has 0 historical clicks)
+    res = index.batch_search([""], top_k=3, fallback_popular_ids=popular_ids)
+    assert len(res) == 1
+    retrieved = [aid for aid, score in res[0]]
+    # Must return popular articles ordered by popularity rank
+    assert retrieved == ["art_2", "art_3", "art_1"]
+
+
+def test_bm25_cold_start_candidate_ordering_by_popularity():
+    articles_data = [
+        {"article_id": "art_1", "title": "Quantum Physics", "abstract": "Physics concepts"},
+        {"article_id": "art_2", "title": "World Cup Soccer", "abstract": "Football tournament"},
+        {"article_id": "art_3", "title": "Cooking Recipes", "abstract": "Italian pasta"},
+    ]
+    df = pd.DataFrame(articles_data)
+    index = BM25InvertedIndex()
+    index.build_index(df)
+
+    # Candidate set of 3 articles to rank for an impression
+    candidates = ["art_1", "art_2", "art_3"]
+    popularity_map = {"art_1": 10.0, "art_2": 100.0, "art_3": 50.0}
+
+    # Cold-start user with no query (empty string)
+    results = index.search(
+        "",
+        top_k=3,
+        candidate_ids=candidates,
+        popularity_map=popularity_map,
+    )
+    ranked_ids = [aid for aid, score in results]
+    # art_2 (popularity 100) > art_3 (popularity 50) > art_1 (popularity 10)
+    assert ranked_ids == ["art_2", "art_3", "art_1"]
+

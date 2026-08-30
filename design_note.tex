@@ -18,6 +18,7 @@
 \usepackage{parskip}
 \usepackage{titlesec}
 \usepackage{fancyhdr}
+\usepackage{placeins}
 
 % --- Layout ---
 \setlength{\parindent}{0pt}
@@ -46,10 +47,10 @@
 \begin{center}
   {\Large\bfseries Design Note: Lexical \& Semantic News Retrieval\\[2pt]
   on MIND and EB-NeRD}\\[6pt]
-  {\normalsize Kavan Gandhi \quad CS4.406 Information Retrieval \& Extraction}\\[2pt]
-  {\small \textit{August 2026} \quad GitHub: \texttt{IRE-Assignment-1}}
+  {\normalsize Kavan Gandhi \quad Roll Number: 2025201078}\\[2pt]
+   {\normalsize \href{https://github.com/KGan31/IRE-Assignment-1}{\texttt{github.com/KGan31/IRE-Assignment-1}}}\\[2pt]
 \end{center}
-\vspace{-4pt}\hrule\vspace{6pt}
+\vspace{4pt}\hrule\vspace{6pt}
 
 % -----------------------------------------------------------------------
 \section{What Was Built}
@@ -63,14 +64,13 @@ A five-stage pipeline (\texttt{make data}) rebuilds both datasets from scratch:
   \item \textbf{Download} --- fetches MIND-small (train/dev) and EB-NeRD-demo via HTTPS.
   \item \textbf{Parse} --- both TSV/parquet formats are normalised into a \emph{unified schema}: \texttt{articles} (article\_id, title, abstract, body, category, embeddings), \texttt{impressions} (impression\_id, user\_id, timestamp, history, candidates+labels), and \texttt{user\_history} (\texttt{src/schema.py}).
   \item \textbf{Temporal Split} --- train/val/test is always time-ordered (never random).  For MIND-small, the provided train/dev split is respected; for EB-NeRD, the last two validation days of the demo split are held out.  A helper enforces that user history features use only clicks \emph{before} the split's earliest impression timestamp, preventing future leakage (\texttt{src/split.py}).
-  \item \textbf{Feature Store} --- writes \texttt{article\_features.parquet} and per-split \texttt{user\_features.parquet} (\texttt{src/feature\_store.py}).
+  \item \textbf{Feature Store} --- writes \texttt{article\_features.parquet} and per-split \texttt{user\_features.parquet}.
   Each row in \texttt{user\_features} represents one user and contains three fields derived from that user's raw click log:
   \begin{itemize}
     \item \texttt{click\_history} --- an ordered list of \texttt{article\_id}s the user clicked, filtered to clicks that occurred strictly before the split's earliest impression timestamp (via \texttt{split.history\_as\_of}), preventing any future leakage.
     \item \texttt{n\_clicks} --- total number of eligible historical clicks for that user.
     \item \texttt{recency\_score} --- a scalar summarising how fresh the user's interest is, computed as $\sum_{i} 0.5^{\,a_i / h}$ where $a_i$ is the age in hours of click $i$ and $h{=}24$ h is the exponential decay half-life; a high score means the user was recently active.
   \end{itemize}
-  User features are re-computed independently for each split (train / val / test) so that downstream retrieval models always see a leakage-free snapshot of user behaviour.
   \item \textbf{Leakage Tests} --- \texttt{make test} (pytest) verifies: no timestamp overlap across splits, no duplicate impressions, and history click timestamps strictly precede impression timestamps.
 \end{enumerate}
 
@@ -106,7 +106,6 @@ All metrics are per-impression averaged with $B{=}1{,}000$ bootstrap resamples f
   \item \textbf{History length} (Table~\ref{tab:ablation_p2}): Sweeping $\{10,20,30\}$, history=20 maximises mean nDCG@10 pooled across both models/datasets; longer history introduces topic drift on both datasets.
   \item \textbf{FAISS flat vs.\ HNSW} (Table~\ref{tab:ablation_p4}): Ranking metrics (AUC/MRR/nDCG@10) are identical across both indexing strategies. HNSW achieves \textbf{2.12$\times$} speedup on MIND (0.45 ms vs.\ 0.96 ms/query, 44{,}146 vs.\ 20{,}872 QPS) and \textbf{2.82$\times$} on EB-NeRD (0.68 ms vs.\ 1.92 ms/query), while retaining $>$91--104\% of Recall@200; diversity (ILD, Novelty, Coverage) is virtually unchanged --- HNSW is preferred for 10$\times$ scale.
   \item \textbf{Cold-start threshold}: Varying the percentile boundary (p1/p2/p5/p10) leaves aggregate metrics invariant, confirming the bottom 2\% is a natural break at near-zero history.
-  \item \textbf{Temporal split over random}: Random splitting leaks future impressions into training user features; time-ordering is mandatory for realistic serving conditions.
 \end{itemize}
 
 % -----------------------------------------------------------------------
@@ -136,19 +135,15 @@ All metrics are per-impression averaged with $B{=}1{,}000$ bootstrap resamples f
 \begin{figure}[h!]
   \centering
   \begin{subfigure}[b]{0.48\linewidth}
-    \fbox{\parbox[c][3.2cm][c]{\linewidth}{\centering
-      \textit{[Screenshot: MIND Codabench leaderboard]}\\[4pt]
-      Competition \#13967}}
-    \caption{MIND (Competition \#13967)}
+    \includegraphics[width=\linewidth]{mind.png}
+    \caption{MIND (Competition)}
   \end{subfigure}
   \hfill
   \begin{subfigure}[b]{0.48\linewidth}
-    \fbox{\parbox[c][3.2cm][c]{\linewidth}{\centering
-      \textit{[Screenshot: EB-NeRD Codabench leaderboard]}\\[4pt]
-      Competition \#2469}}
-    \caption{EB-NeRD (Competition \#2469)}
+    \includegraphics[width=\linewidth]{ebnerd.png}
+    \caption{EB-NeRD (Competition)}
   \end{subfigure}
-  \caption{Codabench submission screenshots (replace with actual screenshots).}
+  \caption{Codabench submission screenshots.}
   \label{fig:codabench}
 \end{figure}
 
@@ -175,7 +170,44 @@ All metrics are per-impression averaged with $B{=}1{,}000$ bootstrap resamples f
   \end{tabularx}
 \end{table}
 
+\subsection{User Cohort Slicing: Cold-Start vs.\ Warm}
+
+\begin{table}[h!]
+  \centering
+  \caption{Cold-start (bottom 2\% by impression history) vs.\ warm user slicing on val set.
+  MIND cold threshold: $\leq 0$ clicks ($N_{\text{cold}}{=}7{,}907$, $N_{\text{warm}}{=}7{,}789$).
+  EB-NeRD cold threshold: $\leq 11$ clicks ($N_{\text{cold}}{=}613$, $N_{\text{warm}}{=}24{,}743$).
+  95\% bootstrap CIs in brackets.}
+  \label{tab:cold_warm}
+  \small
+  \setlength{\tabcolsep}{3pt}
+  \begin{tabularx}{\linewidth}{l l X X X X}
+    \toprule
+    \textbf{Dataset/Slice} & \textbf{Method} & \textbf{AUC} & \textbf{MRR} & \textbf{nDCG@5} & \textbf{nDCG@10} \\
+    \midrule
+    \multicolumn{6}{l}{\textit{MIND (val, 15,696 impressions)}} \\
+    Cold ($\leq 0$ clicks) & BM25     & 0.4839 [.4807,.4874] & 0.2073 & 0.1846 & 0.2524 \\
+    Cold ($\leq 0$ clicks) & Semantic  & 0.4839 [.4807,.4874] & 0.2073 & 0.1846 & 0.2524 \\
+    \quad\small$\Delta$   &           & 0.0000 (0.0\%)       & 0.0000 & 0.0000 & 0.0000 \\
+    Warm ($> 0$ clicks)   & BM25     & 0.4868 [.4835,.4901] & 0.2099 & 0.1814 & 0.2492 \\
+    Warm ($> 0$ clicks)   & Semantic  & \textbf{0.6139} [.6077,.6209] & \textbf{0.3089} & \textbf{0.2853} & \textbf{0.3498} \\
+    \quad\small$\Delta$   &           & +0.1271 (+26.1\%)    & +0.0991 & +0.1039 & +0.1007 \\
+    \midrule
+    \multicolumn{6}{l}{\textit{EB-NeRD (val, 25,356 impressions)}} \\
+    Cold ($\leq 11$ clicks) & BM25    & 0.4485 [.4351,.4630] & 0.2700 & 0.2898 & 0.3800 \\
+    Cold ($\leq 11$ clicks) & Semantic & \textbf{0.5059} [.4777,.5313] & \textbf{0.3191} & \textbf{0.3497} & \textbf{0.4248} \\
+    \quad\small$\Delta$   &           & +0.0574 (+12.8\%)    & +0.0490 & +0.0600 & +0.0448 \\
+    Warm ($> 11$ clicks)  & BM25    & 0.4517 [.4499,.4535] & 0.2743 & 0.2992 & 0.3943 \\
+    Warm ($> 11$ clicks)  & Semantic & \textbf{0.4959} [.4919,.5003] & \textbf{0.3214} & \textbf{0.3497} & \textbf{0.4355} \\
+    \quad\small$\Delta$   &           & +0.0442 (+9.8\%)     & +0.0471 & +0.0505 & +0.0412 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
 \subsection{Ablation Studies}
+Three ablation phases were run to justify the design choices in Section~2: query-field
+choice for BM25, user-history window length, and ANN index strategy at scale. Full
+results are reported in Tables~\ref{tab:ablation_p1}--\ref{tab:ablation_p4}.
 
 \begin{table}[h!]
   \centering
@@ -246,7 +278,7 @@ All metrics are per-impression averaged with $B{=}1{,}000$ bootstrap resamples f
     \bottomrule
   \end{tabularx}
 \end{table}
-
+\FloatBarrier
 % -----------------------------------------------------------------------
 \section{Observations}
 % -----------------------------------------------------------------------
@@ -254,8 +286,10 @@ All metrics are per-impression averaged with $B{=}1{,}000$ bootstrap resamples f
 \textbf{Semantic vs.\ Lexical --- dataset asymmetry.}
 On MIND (English), dense retrieval dominates: AUC +18.3\%, MRR +26.2\%, nDCG@10 +24.8\% on val, and AUC 0.6425 vs.\ 0.5785 on the official Codabench test.  Non-overlapping 95\% CIs confirm statistical significance ($p{<}0.001$).  English news heavy synonym usage (\textit{``presidential election''} / \textit{``White House vote''}) is invisible to BM25 term matching.  On EB-NeRD (Danish), BM25 is competitive: its AUC exceeds Semantic (0.5147 vs.\ 0.4980 on Codabench test), while Semantic leads MRR (+2.95\%) and nDCG@10 (+1.66\%) on val.  Dense proper nouns in Danish editorial text (politicians, municipalities, sports clubs) give BM25 an advantage the embeddings partially fail to capture.
 
-\textbf{Cold-start vs.\ warm users.}
-On MIND, BM25 achieves Recall@50$=0$ for cold-start users (history $\leq 0$ clicks); Semantic maintains non-zero retrieval (Recall@50$=0$) due to the mean-pool of even a single embedding encoding a rich semantic prior.  For warm users the gap widens (Warm AUC: 0.6139 vs.\ 0.5064, +21.2\%).  On EB-NeRD, cold-start margins are smaller ($\leq 11$ clicks threshold) but Semantic consistently outperforms on MRR (+5.99\%) and nDCG@5 (+6.54\%) in that slice.
+\textbf{Cold-start vs.\ warm users (Table~\ref{tab:cold_warm}).}
+On MIND ($\leq 0$ clicks), both models fall back to global popularity ranking, so Cold AUC is identical and Cold Recall@50$=0$ for both.
+The advantage of dense representations becomes decisive for warm users, with Semantic gaining $+26.1\%$ AUC, $+47.2\%$ MRR, and $+40.4\%$ nDCG@10 over BM25.
+On EB-NeRD ($\leq 11$ clicks), Semantic already leads in the cold slice because even a handful of clicks yield a meaningful dense prior; the warm-user margin is smaller but statistically robust (non-overlapping 95\% bootstrap CIs).
 
 \textbf{Head vs.\ tail item slicing.}
 BM25 achieves higher Recall@K on EB-NeRD head articles (Recall@100: 0.0604 vs.\ 0.0316) because popular breaking-news headlines share repeated exact keyword phrases.  However, Semantic dominates on ranking quality for head items (Head AUC: 0.6174 vs.\ 0.5251, +17.6\%) and on all tail metrics (Head nDCG@10: 0.4570 vs.\ 0.3980), indicating superior long-tail discovery via dense cluster alignment.

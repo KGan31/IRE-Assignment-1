@@ -130,10 +130,16 @@ def evaluate_embeddings(
     # NOTE: harness is initialised after the impression loop so that the
     # empirical percentile of history_lengths can be computed first.
 
-    # Popular fallback
+    # Popular fallback and normalized popularity map
     popular_fallback = get_popular_articles(history_df, top_n=max(k_list))
     if not popular_fallback and not articles_df.empty:
         popular_fallback = articles_df["article_id"].head(max(k_list)).tolist()
+
+    popularity_map: Dict[str, float] = {}
+    if not history_df.empty and "clicked_article_id" in history_df.columns:
+        counts = history_df["clicked_article_id"].value_counts()
+        max_c = max(1, counts.max())
+        popularity_map = {str(aid): float(c) / float(max_c) for aid, c in counts.items()}
 
     # Identify head articles (top 20% most clicked articles in history)
     head_articles: Set[str] = set()
@@ -244,13 +250,18 @@ def evaluate_embeddings(
         for i in range(num_queries):
             u_vec = query_matrix[i]
             cands = impression_cands_list[i]
+            is_cold = (history_lengths[i] == 0)
             cand_scores = []
             for aid in cands:
-                if aid in article_id_to_idx:
-                    doc_vec = embeddings_norm[article_id_to_idx[aid]]
-                    score = float(np.dot(u_vec, doc_vec))
+                if is_cold:
+                    # Users with 0 clicks receive ranking based strictly on global article popularity
+                    score = float(popularity_map.get(str(aid), 0.0))
                 else:
-                    score = 0.0
+                    if aid in article_id_to_idx:
+                        doc_vec = embeddings_norm[article_id_to_idx[aid]]
+                        score = float(np.dot(u_vec, doc_vec)) + (1e-4 * popularity_map.get(str(aid), 0.0))
+                    else:
+                        score = 1e-4 * popularity_map.get(str(aid), 0.0)
                 cand_scores.append(score)
             all_candidate_scores.append(cand_scores)
 
@@ -272,25 +283,36 @@ def evaluate_embeddings(
     if eval_mode in ["all", "global"]:
         print(f"[{dataset_name} | {split_name}] Running fast batch vector search for {num_queries} queries...")
         all_retrieved_ids: List[List[str]] = []
+        is_cold_mask = [h == 0 for h in history_lengths]
 
         for start_idx in tqdm(range(0, num_queries, batch_size), desc="Dense Retrieval"):
             end_idx = min(start_idx + batch_size, num_queries)
             batch_q = query_matrix[start_idx:end_idx]
+            batch_cold = is_cold_mask[start_idx:end_idx]
 
-            batch_retrieved_pairs = vector_index.batch_search(batch_q, top_k=max_k)
+            batch_retrieved_pairs = vector_index.batch_search(
+                batch_q,
+                top_k=max_k,
+                fallback_popular_ids=popular_fallback,
+                is_cold_mask=batch_cold,
+            )
 
             for i, pairs in enumerate(batch_retrieved_pairs):
-                retrieved_ids = [aid for aid, score in pairs]
+                global_idx = start_idx + i
+                if is_cold_mask[global_idx] and popular_fallback:
+                    retrieved_ids = list(popular_fallback[:max_k])
+                else:
+                    retrieved_ids = [aid for aid, score in pairs]
 
-                # Fallback padding
-                if len(retrieved_ids) < max_k:
-                    existing = set(retrieved_ids)
-                    for pop_id in popular_fallback:
-                        if pop_id not in existing:
-                            retrieved_ids.append(pop_id)
-                            existing.add(pop_id)
-                            if len(retrieved_ids) >= max_k:
-                                break
+                    # Fallback padding
+                    if len(retrieved_ids) < max_k:
+                        existing = set(retrieved_ids)
+                        for pop_id in popular_fallback:
+                            if pop_id not in existing:
+                                retrieved_ids.append(pop_id)
+                                existing.add(pop_id)
+                                if len(retrieved_ids) >= max_k:
+                                    break
 
                 all_retrieved_ids.append(retrieved_ids)
 
@@ -310,6 +332,7 @@ def evaluate_embeddings(
         all_results["retrieval"] = retrieval_results
 
     return all_results
+
 
 
 def main():

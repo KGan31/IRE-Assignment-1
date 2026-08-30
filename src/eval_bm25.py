@@ -121,10 +121,16 @@ def evaluate_bm25(
     # NOTE: harness is initialised after the impression loop so that the
     # empirical percentile of history_lengths can be computed first.
 
-    # Compute popular fallback articles
+    # Compute popular fallback articles and normalized popularity map
     popular_fallback = get_popular_articles(history_df, top_n=max(k_list))
     if not popular_fallback and not articles_df.empty:
         popular_fallback = articles_df["article_id"].head(max(k_list)).tolist()
+
+    popularity_map: Dict[str, float] = {}
+    if not history_df.empty and "clicked_article_id" in history_df.columns:
+        counts = history_df["clicked_article_id"].value_counts()
+        max_c = max(1, counts.max())
+        popularity_map = {str(aid): float(c) / float(max_c) for aid, c in counts.items()}
 
     # Identify head articles (top 20% most clicked articles in history)
     head_articles: Set[str] = set()
@@ -225,7 +231,7 @@ def evaluate_bm25(
     for start_idx in tqdm(range(0, num_queries, batch_size), desc="BM25 Search"):
         end_idx = min(start_idx + batch_size, num_queries)
         batch_q = queries[start_idx:end_idx]
-        batch_pairs = bm25_index.batch_search(batch_q, top_k=max_k)
+        batch_pairs = bm25_index.batch_search(batch_q, top_k=max_k, fallback_popular_ids=popular_fallback)
         all_retrieved_pairs.extend(batch_pairs)
 
     # 5. Impression Candidate Ranking (AUC, MRR, nDCG@5, nDCG@10)
@@ -236,8 +242,12 @@ def evaluate_bm25(
         for i in range(num_queries):
             cands = impression_cands_list[i]
             retrieved_map = dict(all_retrieved_pairs[i])
-            # Assign BM25 score if retrieved in top_k, else 0.0
-            cand_scores = [retrieved_map.get(aid, 0.0) for aid in cands]
+            # Assign BM25 score if retrieved in top_k, and add popularity tie-breaker.
+            # For cold-start users (0 clicks), scores strictly order candidates by popularity.
+            cand_scores = [
+                retrieved_map.get(aid, 0.0) + (1e-4 * popularity_map.get(str(aid), 0.0))
+                for aid in cands
+            ]
             all_candidate_scores.append(cand_scores)
 
         ranking_results = harness.evaluate_impression_ranking(

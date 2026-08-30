@@ -147,6 +147,29 @@ class FastBM25Scorer:
         return scores
 
 
+def compute_article_popularity(history_paths: List[Path]) -> Dict[str, float]:
+    """Compute normalized article popularity from available history files as a tie-breaker / cold-start fallback."""
+    pop_counts: Counter = Counter()
+    for p in history_paths:
+        if p.exists():
+            print(f"Counting article popularity from {p}...")
+            try:
+                df = pl.read_parquet(p, columns=["clicked_article_id"])
+                counts = df["clicked_article_id"].value_counts()
+                for aid, c in zip(counts["clicked_article_id"].to_list(), counts["count"].to_list()):
+                    if aid is not None:
+                        pop_counts[str(aid)] += c
+            except Exception as e:
+                print(f"[warning] Popularity counting error for {p}: {e}")
+
+    if not pop_counts:
+        return {}
+
+    max_c = max(pop_counts.values())
+    print(f"Computed popularity for {len(pop_counts):,} unique articles (max count: {max_c:,}).")
+    return {aid: c / max_c for aid, c in pop_counts.items()}
+
+
 def load_user_recent_history(history_path: Path, max_history_len: int = 20) -> Dict[str, List[str]]:
     """Load user histories into a dict: user_id -> list of recent clicked article_ids using Polars."""
     if not history_path.exists():
@@ -168,6 +191,7 @@ def evaluate_dev_split(
     scorer: FastBM25Scorer,
     dev_impressions_path: Path,
     user_history_map: Dict[str, List[str]],
+    popularity_map: Optional[Dict[str, float]] = None,
     max_history_len: int = 20,
 ) -> Dict[str, float]:
     """Evaluate candidate ranking on dev split impressions."""
@@ -201,6 +225,10 @@ def evaluate_dev_split(
         q_tokens = tokenize(q_text)
 
         cand_scores = scorer.score_candidates(q_tokens, cands)
+        if popularity_map:
+            for ci, cand_id in enumerate(cands):
+                cand_scores[ci] += 1e-4 * popularity_map.get(cand_id, 0.0)
+
         ranked_indices = np.argsort(-np.asarray(cand_scores, dtype=np.float32))
 
         auc_val = compute_auc(labels, cand_scores)
@@ -235,6 +263,7 @@ def generate_submission(
     test_impressions_path: Path,
     user_history_map: Dict[str, List[str]],
     output_dir: Path,
+    popularity_map: Optional[Dict[str, float]] = None,
     max_history_len: int = 20,
     chunk_size: int = 50000,
 ) -> Path:
@@ -276,6 +305,9 @@ def generate_submission(
                 q_tokens = tokenize(q_text)
 
                 cand_scores = scorer.score_candidates(q_tokens, cands)
+                if popularity_map:
+                    for ci, cand_id in enumerate(cands):
+                        cand_scores[ci] += 1e-4 * popularity_map.get(cand_id, 0.0)
 
                 ranks = rankdata(-np.array(cand_scores, dtype=np.float32), method="ordinal")
                 rank_str = ",".join(str(int(r)) for r in ranks)
@@ -333,6 +365,7 @@ def main():
     )
     parser.add_argument("--output_dir", default="submissions", help="Output directory for submission zip")
     parser.add_argument("--max_history_len", type=int, default=20, help="Max recent articles for query")
+    parser.add_argument("--use_popularity_fallback", action="store_true", default=True, help="Use popularity tie-breaker")
     args = parser.parse_args()
 
     ds_dir = Path("data/processed") / f"mind_{args.dataset_type}"
@@ -341,6 +374,7 @@ def main():
     dev_hist_path = ds_dir / "history_dev.parquet"
     test_impr_path = ds_dir / "impressions_test.parquet"
     test_hist_path = ds_dir / "history_test.parquet"
+    train_hist_path = ds_dir / "history_train.parquet"
 
     if not articles_path.exists():
         raise FileNotFoundError(f"Articles not found at {articles_path}. Run download and parse_mind first.")
@@ -350,12 +384,24 @@ def main():
     scorer = FastBM25Scorer()
     scorer.fit(articles_df, history_fields=args.history_fields)
 
-    # 2. Evaluate on Dev if requested
+    # 2. Compute article popularity if requested
+    pop_map = None
+    if args.use_popularity_fallback:
+        pop_hist_paths = [train_hist_path, dev_hist_path, test_hist_path]
+        pop_map = compute_article_popularity(pop_hist_paths)
+
+    # 3. Evaluate on Dev if requested
     if args.eval_dev and dev_impr_path.exists():
         dev_history_map = load_user_recent_history(dev_hist_path, max_history_len=args.max_history_len)
-        evaluate_dev_split(scorer, dev_impr_path, dev_history_map, max_history_len=args.max_history_len)
+        evaluate_dev_split(
+            scorer=scorer,
+            dev_impressions_path=dev_impr_path,
+            user_history_map=dev_history_map,
+            popularity_map=pop_map,
+            max_history_len=args.max_history_len,
+        )
 
-    # 3. Generate Submission for Test
+    # 4. Generate Submission for Test
     if test_impr_path.exists():
         test_history_map = load_user_recent_history(test_hist_path, max_history_len=args.max_history_len)
         out_path = Path(args.output_dir)
@@ -364,6 +410,7 @@ def main():
             test_impressions_path=test_impr_path,
             user_history_map=test_history_map,
             output_dir=out_path,
+            popularity_map=pop_map,
             max_history_len=args.max_history_len,
         )
         print(f"\nSUCCESS! Codabench submission ready: {zip_path.resolve()}")
@@ -373,3 +420,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

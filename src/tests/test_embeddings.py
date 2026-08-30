@@ -92,3 +92,30 @@ def test_anti_gaming_temporal_boundary_safety():
     prior_clicks = [aid for c_time, aid in user_clicks if c_time < impression_time]
     assert "art_3" not in prior_clicks
     assert prior_clicks == ["art_1", "art_2"]
+
+
+def test_embedding_cold_start_popularity_fallback():
+    embeddings = np.array([
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ], dtype=np.float32)
+    article_ids = ["art_0", "art_1", "art_2"]
+
+    index = EmbeddingIndex()
+    index.build_index(embeddings, article_ids)
+
+    popular_ids = ["art_2", "art_0", "art_1"]
+
+    # Cold start user with is_cold_mask=True
+    query_vec = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+    results = index.batch_search(
+        query_vec,
+        top_k=3,
+        fallback_popular_ids=popular_ids,
+        is_cold_mask=[True],
+    )
+    assert len(results) == 1
+    retrieved = [aid for aid, score in results[0]]
+    assert retrieved == ["art_2", "art_0", "art_1"]
+

@@ -245,17 +245,19 @@ def evaluate_dev_split(
             continue
 
         uid = user_ids[i]
-        u_vec = user_vector_cache.get(uid, global_mean_vector)
+        u_vec = user_vector_cache.get(uid)
+        is_cold = (u_vec is None)
 
         cand_indices = [article_id_to_idx.get(aid, -1) for aid in cands]
-        cand_scores = [
-            float(np.dot(u_vec, embeddings[idx])) if idx >= 0 else 0.0
-            for idx in cand_indices
-        ]
-
-        if popularity_map:
-            for ci, cand_id in enumerate(cands):
-                cand_scores[ci] += 1e-4 * popularity_map.get(cand_id, 0.0)
+        cand_scores = []
+        for aid, idx in zip(cands, cand_indices):
+            if is_cold:
+                score = float(popularity_map.get(aid, 0.0) if popularity_map else 0.0)
+            else:
+                score = float(np.dot(u_vec, embeddings[idx])) if idx >= 0 else 0.0
+                if popularity_map:
+                    score += 1e-4 * popularity_map.get(aid, 0.0)
+            cand_scores.append(score)
 
         cand_scores_arr = np.array(cand_scores, dtype=np.float32)
         ranked_indices = np.argsort(-cand_scores_arr)
@@ -342,18 +344,20 @@ def generate_submission(
             else:
                 cands = list(cands)
                 uid = user_ids[i]
-                u_vec = user_vector_cache.get(uid, global_mean_vector)
+                u_vec = user_vector_cache.get(uid)
+                is_cold = (u_vec is None)
 
-                # Candidate dot product scores
+                # Candidate dot product scores or cold-start popularity
                 cand_indices = [article_id_to_idx.get(aid, -1) for aid in cands]
-                cand_scores = [
-                    float(np.dot(u_vec, embeddings[idx])) if idx >= 0 else 0.0
-                    for idx in cand_indices
-                ]
-
-                if popularity_map:
-                    for ci, cand_id in enumerate(cands):
-                        cand_scores[ci] += 1e-4 * popularity_map.get(cand_id, 0.0)
+                cand_scores = []
+                for aid, idx in zip(cands, cand_indices):
+                    if is_cold:
+                        score = float(popularity_map.get(aid, 0.0) if popularity_map else 0.0)
+                    else:
+                        score = float(np.dot(u_vec, embeddings[idx])) if idx >= 0 else 0.0
+                        if popularity_map:
+                            score += 1e-4 * popularity_map.get(aid, 0.0)
+                    cand_scores.append(score)
 
                 rank_str = fast_ordinal_ranks(cand_scores)
                 buffer.append(f"{raw_impr_id} [{rank_str}]\n")

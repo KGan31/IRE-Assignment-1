@@ -91,6 +91,30 @@ def get_or_compute_embeddings(
     return embeddings, article_id_to_idx, article_ids
 
 
+def compute_article_popularity(history_paths: List[Path]) -> Dict[str, float]:
+    """Compute normalized article popularity from available history files as a tie-breaker / cold-start fallback."""
+    pop_counts: Dict[str, int] = {}
+    for p in history_paths:
+        if p.exists():
+            print(f"Counting article popularity from {p}...")
+            try:
+                df = pl.read_parquet(p, columns=["clicked_article_id"])
+                counts = df["clicked_article_id"].value_counts()
+                for aid, c in zip(counts["clicked_article_id"].to_list(), counts["count"].to_list()):
+                    if aid is not None:
+                        key = str(aid)
+                        pop_counts[key] = pop_counts.get(key, 0) + c
+            except Exception as e:
+                print(f"[warning] Popularity counting error for {p}: {e}")
+
+    if not pop_counts:
+        return {}
+
+    max_c = max(pop_counts.values())
+    print(f"Computed popularity for {len(pop_counts):,} unique articles (max count: {max_c:,}).")
+    return {aid: c / max_c for aid, c in pop_counts.items()}
+
+
 def load_user_recent_history(history_path: Path, max_history_len: int = 20) -> Dict[str, List[str]]:
     """Load user histories into a dict: user_id -> list of recent clicked article_ids using Polars."""
     if not history_path.exists():
@@ -114,6 +138,7 @@ def evaluate_dev_split(
     global_mean_vector: np.ndarray,
     dev_impressions_path: Path,
     user_history_map: Dict[str, List[str]],
+    popularity_map: Optional[Dict[str, float]] = None,
 ) -> Dict[str, float]:
     """Evaluate dense semantic candidate ranking on dev split impressions."""
     print(f"Evaluating Dense Semantic Candidate Ranking on Dev Set: {dev_impressions_path}...")
@@ -147,17 +172,19 @@ def evaluate_dev_split(
             article_id_to_idx=article_id_to_idx,
             embeddings=embeddings,
         )
-        if u_vec is None:
-            u_vec = global_mean_vector
+        is_cold = (u_vec is None)
 
-        # Candidate embeddings matrix
         cand_indices = [article_id_to_idx.get(aid, -1) for aid in cands]
         cand_scores = []
-        for idx in cand_indices:
-            if idx >= 0:
-                cand_scores.append(float(np.dot(u_vec, embeddings[idx])))
+        for aid, idx in zip(cands, cand_indices):
+            if is_cold:
+                # 0-click users rank candidate articles strictly by global popularity
+                score = float(popularity_map.get(aid, 0.0) if popularity_map else 0.0)
             else:
-                cand_scores.append(0.0)
+                score = float(np.dot(u_vec, embeddings[idx])) if idx >= 0 else 0.0
+                if popularity_map:
+                    score += 1e-4 * popularity_map.get(aid, 0.0)
+            cand_scores.append(score)
 
         ranked_indices = np.argsort(-np.asarray(cand_scores, dtype=np.float32))
 
@@ -195,6 +222,7 @@ def generate_submission(
     test_impressions_path: Path,
     user_history_map: Dict[str, List[str]],
     output_dir: Path,
+    popularity_map: Optional[Dict[str, float]] = None,
     chunk_size: int = 50000,
 ) -> Path:
     """
@@ -241,14 +269,20 @@ def generate_submission(
             else:
                 cands = list(cands)
                 user_id = user_ids[i]
-                u_vec = user_vector_cache.get(user_id, global_mean_vector)
+                u_vec = user_vector_cache.get(user_id)
+                is_cold = (u_vec is None)
 
-                # Candidate dot product scores
+                # Candidate dot product scores or cold start popularity
                 cand_indices = [article_id_to_idx.get(aid, -1) for aid in cands]
-                cand_scores = [
-                    float(np.dot(u_vec, embeddings[idx])) if idx >= 0 else 0.0
-                    for idx in cand_indices
-                ]
+                cand_scores = []
+                for aid, idx in zip(cands, cand_indices):
+                    if is_cold:
+                        score = float(popularity_map.get(aid, 0.0) if popularity_map else 0.0)
+                    else:
+                        score = float(np.dot(u_vec, embeddings[idx])) if idx >= 0 else 0.0
+                        if popularity_map:
+                            score += 1e-4 * popularity_map.get(aid, 0.0)
+                    cand_scores.append(score)
 
                 # Compute ranks: highest score gets rank 1
                 rank_str = fast_ordinal_ranks(cand_scores)
@@ -304,6 +338,7 @@ def main():
     parser.add_argument("--batch_size", type=int, default=512, help="Embedding encoding batch size")
     parser.add_argument("--device", default=None, help="Device for PyTorch inference ('cpu', 'cuda')")
     parser.add_argument("--force_recompute", action="store_true", help="Force recomputing embeddings")
+    parser.add_argument("--use_popularity_fallback", action="store_true", default=True, help="Use popularity fallback for cold-start")
     args = parser.parse_args()
 
     ds_dir = Path("data/processed") / f"mind_{args.dataset_type}"
@@ -312,6 +347,7 @@ def main():
     dev_hist_path = ds_dir / "history_dev.parquet"
     test_impr_path = ds_dir / "impressions_test.parquet"
     test_hist_path = ds_dir / "history_test.parquet"
+    train_hist_path = ds_dir / "history_train.parquet"
 
     if not articles_path.exists():
         raise FileNotFoundError(f"Articles not found at {articles_path}.")
@@ -333,7 +369,13 @@ def main():
     hnsw_index = EmbeddingIndex(use_approximate=True)
     hnsw_index.build_index(embeddings, article_ids)
 
-    # 2. Evaluate on Dev if requested
+    # 2. Compute article popularity if requested
+    pop_map = None
+    if args.use_popularity_fallback:
+        pop_hist_paths = [train_hist_path, dev_hist_path, test_hist_path]
+        pop_map = compute_article_popularity(pop_hist_paths)
+
+    # 3. Evaluate on Dev if requested
     if args.eval_dev and dev_impr_path.exists():
         dev_history_map = load_user_recent_history(dev_hist_path, max_history_len=args.max_history_len)
         evaluate_dev_split(
@@ -342,9 +384,10 @@ def main():
             global_mean_vector=global_mean_vector,
             dev_impressions_path=dev_impr_path,
             user_history_map=dev_history_map,
+            popularity_map=pop_map,
         )
 
-    # 3. Generate Submission for Test
+    # 4. Generate Submission for Test
     if test_impr_path.exists():
         test_history_map = load_user_recent_history(test_hist_path, max_history_len=args.max_history_len)
         out_path = Path(args.output_dir)
@@ -355,6 +398,7 @@ def main():
             test_impressions_path=test_impr_path,
             user_history_map=test_history_map,
             output_dir=out_path,
+            popularity_map=pop_map,
         )
         print(f"\nSUCCESS! Semantic Codabench submission ready: {zip_path.resolve()}")
     else:
@@ -363,3 +407,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

@@ -1,0 +1,271 @@
+\documentclass[11pt,a4paper]{article}
+
+% --- Typography & Geometry ---
+\usepackage[margin=2cm]{geometry}
+\usepackage{times}
+\usepackage{microtype}
+\usepackage{amsmath, amssymb, amsfonts, bm}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{parskip}
+
+% --- Layout & Spacing ---
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+\titlespacing*{\section}{0pt}{10pt}{4pt}
+\titlespacing*{\subsection}{0pt}{8pt}{3pt}
+\titlespacing*{\subsubsection}{0pt}{6pt}{2pt}
+
+\titleformat{\section}{\normalfont\large\bfseries}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalfont\normalsize\bfseries}{\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}{\normalfont\normalsize\itshape}{\thesubsubsection}{0.6em}{}
+
+\setlist[itemize]{noitemsep, topsep=2pt, parsep=0pt, leftmargin=1.5em}
+\setlist[enumerate]{noitemsep, topsep=2pt, parsep=0pt, leftmargin=1.5em}
+
+% --- Header / Footer ---
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{\small CS4.406 Information Retrieval $\cdot$ Mathematical Reference}
+\lhead{\small Kavan Gandhi}
+\rfoot{\small Page \thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% --- Colours & Hyperref ---
+\definecolor{darkblue}{RGB}{0,51,102}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=darkblue,
+    urlcolor=darkblue,
+    citecolor=darkblue
+}
+
+\begin{document}
+
+\begin{center}
+  {\Large\bfseries Mathematical Formulations, Scoring Functions, and Evaluation Metrics}\\[4pt]
+  {\large News Recommendation \& Retrieval Engine (MIND \& EB-NeRD)}\\[6pt]
+  {\normalsize Kavan Gandhi \quad $\cdot$ \quad CS4.406 Information Retrieval \& Extraction}\\[2pt]
+  {\small \textit{August 2026} \quad $\cdot$ \quad Codebase: \texttt{IRE-Assignment-1}}
+\end{center}
+\vspace{-2pt}\hrule\vspace{8pt}
+
+This document details all mathematical formulas, scoring functions, objective formulations, evaluation metrics, and statistical methods implemented across the project codebase.
+
+% -----------------------------------------------------------------------------
+\section{Lexical Candidate Generation and Retrieval: Okapi BM25}
+% -----------------------------------------------------------------------------
+\textit{Implemented in \texttt{src/bm25.py}, \texttt{src/generate\_mind\_submission.py}, and \texttt{src/generate\_ebnerd\_submission.py}.}
+
+\subsection{Robertson--Sp\"arck Jones Inverse Document Frequency (IDF)}
+\begin{equation}
+\text{IDF}(t) = \ln\left(1 + \frac{N - \text{df}(t) + 0.5}{\text{df}(t) + 0.5}\right)
+\end{equation}
+
+\begin{itemize}
+  \item $N$: Total number of articles in the indexed catalog corpus.
+  \item $\text{df}(t)$: Document frequency of term $t$ (count of documents in the catalog containing $t$).
+  \item $+0.5$: Robertson--Sp\"arck Jones smoothing parameter preventing division-by-zero and negative term weights for high-frequency terms.
+  \item \textbf{Significance}: Quantifies the specificity and discriminative capacity of a query term. Common non-discriminative terms receive near-zero weights, while rare, topical terms receive high positive weights.
+\end{itemize}
+
+\subsection{Okapi BM25 Document Scoring Function}
+\begin{equation}
+\text{Score}_{\text{BM25}}(Q, D) = \sum_{t \in Q \cap D} \text{IDF}(t) \cdot \frac{\text{TF}(t, D) \cdot (k_1 + 1)}{\text{TF}(t, D) + k_1 \cdot \left(1 - b + b \cdot \frac{|D|}{\text{avgdl}}\right)}
+\end{equation}
+
+\begin{itemize}
+  \item $\text{TF}(t, D)$: Term frequency of token $t$ in candidate document $D$.
+  \item $|D|$: Document length (total token count of article title + abstract).
+  \item $\text{avgdl}$: Average document length across all $N$ catalog articles:
+  \begin{equation}
+  \text{avgdl} = \frac{1}{N}\sum_{i=1}^N |D_i|
+  \end{equation}
+  \item $k_1 = 1.5$: Term frequency saturation parameter. As $\text{TF}(t, D) \to \infty$, the contribution of term $t$ asymptotes toward $(k_1 + 1)$.
+  \item $b = 0.75$: Document length penalization parameter ($b = 0$ corresponds to no length penalty; $b = 1$ scales inversely with relative length).
+  \item \textbf{Significance}: Computes the lexical relevance between pseudo-query $Q$ (concatenated recent user click history) and candidate article $D$, balancing term frequency saturation against document verbosity.
+\end{itemize}
+
+% -----------------------------------------------------------------------------
+\section{Dense Semantic Candidate Retrieval and User Representation}
+% -----------------------------------------------------------------------------
+\textit{Implemented in \texttt{src/embeddings.py} and \texttt{src/eval\_embeddings.py}.}
+
+\subsection{Vector $L_2$ Normalization}
+\begin{equation}
+\mathbf{\hat{v}} = \frac{\mathbf{v}}{\|\mathbf{v}\|_2 + \epsilon} = \frac{\mathbf{v}}{\sqrt{\sum_{k=1}^d v_k^2} + \epsilon}
+\end{equation}
+
+\begin{itemize}
+  \item $\mathbf{v} \in \mathbb{R}^d$: Dense text embedding vector ($d = 384$ for \texttt{all-MiniLM-L6-v2} / Multilingual BERT).
+  \item $\epsilon = 10^{-12}$: Small numerical stability constant.
+  \item \textbf{Significance}: Maps vectors to the unit hypersphere $\mathbb{S}^{d-1}$ so that inner products correspond to exact cosine similarities.
+\end{itemize}
+
+\subsection{User History Centroid Representation (Mean Pooling)}
+\begin{equation}
+\mathbf{u} = \text{normalize}\left(\frac{\sum_{i=1}^m w_i \cdot \mathbf{e}_{a_i}}{\sum_{i=1}^m w_i + \epsilon}\right)
+\end{equation}
+
+\begin{itemize}
+  \item $H_u = [a_1, a_2, \dots, a_m]$: Chronologically ordered list of up to $m = 20$ most recent clicked article IDs prior to the split timestamp cutoff.
+  \item $\mathbf{e}_{a_i} \in \mathbb{R}^d$: $L_2$-normalized dense embedding of historical article $a_i$.
+  \item $w_i$: Historical click weight (uniform $w_i = 1.0$ or exponential decay weight).
+  \item \textbf{Significance}: Synthesizes the user's sequential reading history into a single compact semantic centroid vector without future data leakage.
+\end{itemize}
+
+\subsection{Semantic Similarity Scoring}
+\begin{equation}
+\text{Score}_{\text{Dense}}(u, D) = \langle \mathbf{\hat{u}}, \mathbf{\hat{e}}_D \rangle = \sum_{k=1}^d \hat{u}_k \cdot \hat{e}_{D, k}
+\end{equation}
+
+\begin{itemize}
+  \item \textbf{Significance}: Measures the continuous cosine similarity between user vector $\mathbf{\hat{u}}$ and candidate article vector $\mathbf{\hat{e}}_D$. Exact or approximate $K$-nearest neighbors are retrieved using FAISS (\texttt{IndexFlatIP} or \texttt{IndexHNSWFlat}).
+\end{itemize}
+
+% -----------------------------------------------------------------------------
+\section{Feature Engineering: Temporal Recency Decay}
+% -----------------------------------------------------------------------------
+\textit{Implemented in \texttt{src/feature\_store.py}.}
+
+\begin{equation}
+\text{Recency Score}(u) = \sum_{i \in H_u} 0.5^{\frac{\text{age}(i)}{h}}
+\end{equation}
+
+\begin{itemize}
+  \item $\text{age}(i)$: Age in hours of click $i$ measured relative to the split earliest cutoff timestamp $t_{\text{as\_of}}$:
+  \begin{equation}
+  \text{age}(i) = \frac{t_{\text{as\_of}} - t_{\text{click}, i}}{3600}
+  \end{equation}
+  \item $h = 24.0\text{ hours}$: Exponential decay half-life.
+  \item \textbf{Significance}: Summarizes user freshness into a scalar feature. Recent interactions contribute heavily (a click 24 hours ago contributes $0.5$; 48 hours ago contributes $0.25$), distinguishing active users from inactive ones.
+\end{itemize}
+
+% -----------------------------------------------------------------------------
+\section{Ranking and Accuracy Evaluation Metrics}
+% -----------------------------------------------------------------------------
+\textit{Implemented in \texttt{src/metrics.py} and \texttt{src/eval\_harness.py}.}
+
+\subsection{Area Under the ROC Curve (AUC --- Wilcoxon--Mann--Whitney)}
+\begin{equation}
+\text{AUC} = \frac{\sum_{i \in \text{Pos}} \text{rank}(i) - \frac{n_{\text{pos}}(n_{\text{pos}} + 1)}{2}}{n_{\text{pos}} \cdot n_{\text{neg}}}
+\end{equation}
+
+\begin{itemize}
+  \item $\text{rank}(i)$: 1-based rank position of the $i$-th positive article when candidates are sorted in \textbf{ascending} order of predicted scores (with average rank tie adjustments).
+  \item $n_{\text{pos}}, n_{\text{neg}}$: Number of clicked ($y = 1$) and unclicked ($y = 0$) candidate articles in the impression.
+  \item \textbf{Significance}: Measures pairwise classification quality, representing the exact probability that a randomly selected clicked article is scored higher than an unclicked article:
+  \begin{equation}
+  \text{AUC} = P(s_{\text{pos}} > s_{\text{neg}})
+  \end{equation}
+\end{itemize}
+
+\subsection{Mean Reciprocal Rank (MRR)}
+\begin{equation}
+\text{RR} = \begin{cases}
+\dfrac{1}{\text{rank}_{\text{first\_pos}}}, & \text{if } n_{\text{pos}} \ge 1 \\
+0.0, & \text{if } n_{\text{pos}} = 0
+\end{cases}, \qquad
+\text{MRR} = \frac{1}{|U|} \sum_{u=1}^{|U|} \text{RR}_u
+\end{equation}
+
+\begin{itemize}
+  \item $\text{rank}_{\text{first\_pos}}$: 1-based rank of the top-ranked clicked article when candidate items are sorted in \textbf{descending} order of scores.
+  \item \textbf{Significance}: Evaluates how quickly the user encounters their first relevant article.
+\end{itemize}
+
+\subsection{Normalized Discounted Cumulative Gain (nDCG@K)}
+\begin{equation}
+\text{DCG}@K = \sum_{i=1}^K \frac{y_i}{\log_2(i + 1)}, \qquad
+\text{IDCG}@K = \sum_{i=1}^{\min(K, n_{\text{pos}})} \frac{1}{\log_2(i + 1)}
+\end{equation}
+\begin{equation}
+\text{nDCG}@K = \frac{\text{DCG}@K}{\text{IDCG}@K}
+\end{equation}
+
+\begin{itemize}
+  \item $y_i \in \{0, 1\}$: Binary click ground-truth label at rank position $i$.
+  \item $\frac{1}{\log_2(i + 1)}$: Position discount factor dampening gains at lower ranks.
+  \item $\text{IDCG}@K$: Ideal Discounted Cumulative Gain achieved by placing all positive articles at the top.
+  \item \textbf{Significance}: Position-sensitive ranking metric that heavily rewards placing relevant news at the topmost slots ($K \in \{5, 10\}$), normalized to $[0, 1]$.
+\end{itemize}
+
+\subsection{Candidate Retrieval Recall@K}
+\begin{equation}
+\text{Recall}@K = \frac{|\text{Retrieved}_{@K} \cap \text{GroundTruth}|}{|\text{GroundTruth}|}
+\end{equation}
+
+\begin{itemize}
+  \item $\text{Retrieved}_{@K}$: Set of top-$K$ articles retrieved from the full catalog ($K \in \{50, 100, 200\}$).
+  \item $\text{GroundTruth}$: Set of true clicked articles in the impression.
+  \item \textbf{Significance}: Measures the retrieval recall ceiling of the candidate generation stage prior to fine-grained reranking.
+\end{itemize}
+
+% -----------------------------------------------------------------------------
+\section{Beyond-Accuracy Recommendation Metrics}
+% -----------------------------------------------------------------------------
+\textit{Implemented in \texttt{src/metrics.py}.}
+
+\subsection{Intra-List Diversity (ILD@K)}
+\begin{equation}
+\text{ILD}@K = \frac{2}{K(K - 1)} \sum_{1 \le i < j \le K} \left(1 - \langle \mathbf{\hat{e}}_i, \mathbf{\hat{e}}_j \rangle\right)
+\end{equation}
+
+\begin{itemize}
+  \item $\mathbf{\hat{e}}_i, \mathbf{\hat{e}}_j$: Normalized embedding vectors of recommendations at ranks $i$ and $j$.
+  \item $1 - \langle \mathbf{\hat{e}}_i, \mathbf{\hat{e}}_j \rangle$: Pairwise cosine distance.
+  \item \textbf{Significance}: Measures the semantic spread among recommended articles in a user's top-$K$ slate ($K = 10$), penalizing narrow topic redundancy.
+\end{itemize}
+
+\subsection{Novelty@K (Self-Information Surprise)}
+\begin{equation}
+\text{Novelty}@K = \frac{1}{K} \sum_{i=1}^K -\log_2 P(a_i)
+\end{equation}
+
+\begin{itemize}
+  \item $P(a_i)$: Prior empirical click probability (popularity) of article $a_i$ in historical logs:
+  \begin{equation}
+  P(a_i) = \frac{\text{Clicks}(a_i)}{\sum_{j \in C} \text{Clicks}(a_j)}
+  \end{equation}
+  \item \textbf{Significance}: Quantifies the average information content (surprise in bits) of the recommendations. Recommending viral head articles yields low novelty, whereas recommending niche tail articles yields high novelty.
+\end{itemize}
+
+\subsection{Catalog Coverage@K}
+\begin{equation}
+\text{Coverage}@K = \frac{\left|\bigcup_{u \in U} \text{TopK}_u\right|}{|C|}
+\end{equation}
+
+\begin{itemize}
+  \item $\text{TopK}_u$: Set of top-$K$ recommended articles presented to user $u$.
+  \item $|C|$: Total number of articles in the full catalog.
+  \item \textbf{Significance}: Proportion of the catalog exposed to at least one user, assessing catalog discovery and long-tail exploration.
+\end{itemize}
+
+% -----------------------------------------------------------------------------
+\section{Statistical Inference: Non-Parametric Bootstrap Confidence Intervals}
+% -----------------------------------------------------------------------------
+\textit{Implemented in \texttt{src/metrics.py}.}
+
+Given empirical metric observations $S = [s_1, s_2, \dots, s_N]$ over $N$ test impressions:
+\begin{enumerate}
+  \item Draw $B = 1000$ bootstrap resamples $S^{*b}$ of size $N$ with replacement from $S$.
+  \item Compute the replicate mean for each resample:
+  \begin{equation}
+  \bar{\theta}^{*b} = \frac{1}{N} \sum_{j=1}^N s^{*b}_j, \quad \forall b \in \{1, 2, \dots, B\}
+  \end{equation}
+  \item Calculate the empirical 95\% Confidence Interval via percentiles:
+  \begin{equation}
+  \text{CI}_{95\%} = \left[ \text{Percentile}\left(\bar{\theta}^*, 2.5\%\right), \; \text{Percentile}\left(\bar{\theta}^*, 97.5\%\right) \right]
+  \end{equation}
+\end{enumerate}
+
+\begin{itemize}
+  \item \textbf{Significance}: Yields non-parametric, statistically rigorous confidence intervals for all ranking and retrieval metrics without assuming Gaussian error distributions.
+\end{itemize}
+
+\end{document}

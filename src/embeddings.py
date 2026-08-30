@@ -295,10 +295,13 @@ class EmbeddingIndex:
         self,
         query_vectors: np.ndarray,
         top_k: int = 200,
+        fallback_popular_ids: Optional[List[str]] = None,
+        is_cold_mask: Optional[List[bool]] = None,
     ) -> List[List[Tuple[str, float]]]:
         """
         Batch retrieve top-K (article_id, similarity_score) for a matrix of query vectors.
         query_vectors shape: (Q, D), float32
+        If is_cold_mask[i] is True (or query_vector is all zeros / cold start), falls back to popular articles.
 
         Dispatch order:
         1. force_numpy=True  -> numpy matrix-multiply brute-force (always exact).
@@ -308,19 +311,32 @@ class EmbeddingIndex:
         if not self.is_built or len(self.article_ids) == 0 or len(query_vectors) == 0:
             return [[] for _ in range(len(query_vectors))]
 
-        q_vecs = np.ascontiguousarray(normalize_l2(query_vectors), dtype=np.float32)
         num_docs = len(self.article_ids)
         k = min(top_k, num_docs)
+
+        # Precompute fallback popular pairs if provided
+        popular_pairs: List[Tuple[str, float]] = []
+        if fallback_popular_ids:
+            for rank_idx, pop_id in enumerate(fallback_popular_ids[:k]):
+                popular_pairs.append((pop_id, 1.0 / (rank_idx + 1.0)))
+
+        q_vecs = np.ascontiguousarray(normalize_l2(query_vectors), dtype=np.float32)
 
         # --- FAISS path (flat exact or HNSW ANN) ---
         if not self.force_numpy and HAS_FAISS and self.index is not None:
             scores, indices = self.index.search(q_vecs, k)
             results: List[List[Tuple[str, float]]] = []
-            for row_indices, row_scores in zip(indices, scores):
+            for row_idx, (row_indices, row_scores) in enumerate(zip(indices, scores)):
+                if is_cold_mask is not None and is_cold_mask[row_idx] and popular_pairs:
+                    results.append(list(popular_pairs))
+                    continue
+
                 row_res = []
                 for idx, score in zip(row_indices, row_scores):
                     if idx >= 0:
                         row_res.append((self.article_ids[idx], float(score)))
+                if not row_res and popular_pairs:
+                    row_res = list(popular_pairs)
                 results.append(row_res)
             return results
 
@@ -329,10 +345,16 @@ class EmbeddingIndex:
         sim_matrix = np.dot(q_vecs, self.embeddings.T)
         results = []
         for i in range(len(query_vectors)):
+            if is_cold_mask is not None and is_cold_mask[i] and popular_pairs:
+                results.append(list(popular_pairs))
+                continue
+
             row_sims = sim_matrix[i]
             top_indices = np.argpartition(-row_sims, k - 1)[:k]
             top_indices = top_indices[np.argsort(-row_sims[top_indices])]
             row_res = [(self.article_ids[idx], float(row_sims[idx])) for idx in top_indices]
+            if not row_res and popular_pairs:
+                row_res = list(popular_pairs)
             results.append(row_res)
 
         return results

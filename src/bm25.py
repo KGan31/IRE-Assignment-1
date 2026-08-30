@@ -141,35 +141,51 @@ class BM25InvertedIndex:
         self,
         query_texts: List[str],
         top_k: int = 200,
+        fallback_popular_ids: Optional[List[str]] = None,
     ) -> List[List[Tuple[str, float]]]:
-        """Batch retrieve top_k (article_id, score) for a list of query strings."""
+        """
+        Batch retrieve top_k (article_id, score) for a list of query strings.
+        If a query is empty (cold-start user with no clicks), falls back to top popular articles.
+        """
         if not self.is_built or not self.article_ids or not query_texts:
             return [[] for _ in query_texts]
 
+        num_docs = len(self.article_ids)
+        k = min(top_k, num_docs)
+
+        # Precompute fallback popular pairs if provided
+        popular_pairs: List[Tuple[str, float]] = []
+        if fallback_popular_ids:
+            for rank_idx, pop_id in enumerate(fallback_popular_ids[:k]):
+                # Assign decaying score based on popularity rank
+                popular_pairs.append((pop_id, 1.0 / (rank_idx + 1.0)))
+
         if HAS_BM25S and self.retriever is not None:
             query_tokens = bm25s.tokenize(query_texts, show_progress=False)
-            k = min(top_k, len(self.article_ids))
             results_idx, scores = self.retriever.retrieve(
                 query_tokens, k=k, show_progress=False
             )
 
             batch_results: List[List[Tuple[str, float]]] = []
-            for doc_indices, score_row in zip(results_idx, scores):
+            for q_idx, (doc_indices, score_row) in enumerate(zip(results_idx, scores)):
                 row_res: List[Tuple[str, float]] = []
                 for doc_idx, score in zip(doc_indices, score_row):
                     if score > 0.0:
                         row_res.append((self.article_ids[doc_idx], float(score)))
+
+                # If query is empty / no positive BM25 scores (cold start), use popular articles fallback
+                if not row_res and popular_pairs:
+                    row_res = list(popular_pairs)
+
                 batch_results.append(row_res)
             return batch_results
 
         elif HAS_RANK_BM25 and self.retriever is not None:
             batch_results = []
-            num_docs = len(self.article_ids)
-            k = min(top_k, num_docs)
             for q_text in query_texts:
                 tokens = default_tokenize(q_text)
                 if not tokens:
-                    batch_results.append([])
+                    batch_results.append(list(popular_pairs) if popular_pairs else [])
                     continue
                 scores = self.retriever.get_scores(tokens)
                 top_indices = np.argsort(-scores)[:k]
@@ -178,6 +194,8 @@ class BM25InvertedIndex:
                     for idx in top_indices
                     if scores[idx] > 0.0
                 ]
+                if not row_res and popular_pairs:
+                    row_res = list(popular_pairs)
                 batch_results.append(row_res)
             return batch_results
 
@@ -188,14 +206,43 @@ class BM25InvertedIndex:
         query_text: str,
         top_k: int = 200,
         candidate_ids: Optional[List[str]] = None,
+        fallback_popular_ids: Optional[List[str]] = None,
+        popularity_map: Optional[Dict[str, float]] = None,
     ) -> List[Tuple[str, float]]:
-        """Single query search helper with optional candidate filtering."""
-        batch_res = self.batch_search([query_text], top_k=top_k)
+        """Single query search helper with optional candidate filtering and popularity fallback."""
+        batch_res = self.batch_search(
+            [query_text], top_k=top_k, fallback_popular_ids=fallback_popular_ids
+        )
         results = batch_res[0] if batch_res else []
 
         if candidate_ids is not None:
             cand_set = set(candidate_ids)
-            results = [(aid, score) for aid, score in results if aid in cand_set]
-            return results[:top_k]
+            filtered = [(aid, score) for aid, score in results if aid in cand_set]
+
+            # If cold start or no candidates matched, rank candidate_ids by popularity
+            if not filtered and candidate_ids:
+                if popularity_map:
+                    # Sort candidate_ids by popularity descending
+                    sorted_cands = sorted(
+                        candidate_ids,
+                        key=lambda aid: popularity_map.get(aid, 0.0),
+                        reverse=True,
+                    )
+                elif fallback_popular_ids:
+                    pop_rank = {aid: idx for idx, aid in enumerate(fallback_popular_ids)}
+                    sorted_cands = sorted(
+                        candidate_ids,
+                        key=lambda aid: pop_rank.get(aid, 999999),
+                    )
+                else:
+                    sorted_cands = list(candidate_ids)
+
+                filtered = [
+                    (aid, float(popularity_map.get(aid, 0.0) if popularity_map else (1.0 / (idx + 1.0))))
+                    for idx, aid in enumerate(sorted_cands)
+                ]
+
+            return filtered[:top_k]
 
         return results
+
