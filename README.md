@@ -83,6 +83,8 @@ src/split.py      temporal split + leak-free history cutoff helper
 src/feature_store.py  article + user feature tables
 src/tests/        pytest leakage tests
 configs/pipeline.yaml  all paths, URLs, split window sizes, feature params
+docs/             design notes, report pdfs, mathematical formulations, Q4 benchmark
+docs/ablations/   ablation studies and benchmark results markdown files
 ```
 
 ## Design notes / known simplifications (flag these in the Q6 write-up)

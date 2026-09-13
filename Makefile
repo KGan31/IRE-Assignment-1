@@ -31,11 +31,17 @@ download-mind-large:
 parse-mind-large:
 	python src/parse_mind.py --dataset_type large --split all
 
+features-mind-large:
+	python src/feature_store.py --dataset mind_large --config configs/pipeline.yaml
+
 submit-mind-bm25:
 	python src/generate_mind_submission.py --dataset_type large --eval_dev --output_dir submissions
 
 submit-mind-semantic:
 	python src/generate_mind_semantic_submission.py --dataset_type large --eval_dev --output_dir submissions_semantic
+
+submit-mind-reranker:
+	python src/generate_mind_reranker_submission.py --dataset_type large --eval_dev --output_dir submissions/submissions_mind_reranker
 
 download-ebnerd-large:
 	python src/download.py --dataset ebnerd_large
@@ -51,6 +57,12 @@ submit-ebnerd-bm25-fulltext:
 
 submit-ebnerd-semantic:
 	python src/generate_ebnerd_semantic_submission.py --dataset_type large --eval_dev --output_dir submissions_ebnerd_semantic
+
+submit-ebnerd-reranker:
+	python src/generate_ebnerd_reranker_submission.py --dataset_type large --output_dir submissions/submissions_ebnerd_reranker
+
+eval-ebnerd-reranker:
+	python src/evaluate_ebnerd_large_validation.py --max_impressions 50000
 
 test:
 	pytest src/tests/ -v

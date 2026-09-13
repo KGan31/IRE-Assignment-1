@@ -3,7 +3,7 @@
 Ablation Study Runner
 =====================
 Runs a structured set of ablations across MIND (small/val) and
-EB-NeRD (demo/val) and writes results to ablations.md.
+EB-NeRD (demo/val) and writes results to docs/ablations/ablations_1000.md.
 
 Ablation Phases
 ---------------
@@ -54,7 +54,7 @@ with open(CONFIG_PATH) as _f:
 
 PROCESSED_DIR = ROOT / Path(_cfg["paths"]["processed_dir"])
 RAW_DIR = ROOT / Path(_cfg["paths"]["raw_dir"])
-OUTPUT_MD = ROOT / "ablations_1000.md"
+OUTPUT_MD = ROOT / "docs" / "ablations" / "ablations_1000.md"
 
 DATASETS = ["mind", "ebnerd"]
 SPLIT = "val"

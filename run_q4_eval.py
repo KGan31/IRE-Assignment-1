@@ -10,7 +10,7 @@ Runs the Unified Offline Evaluation Harness across:
     * User Cohort: Cold-Start (bottom 2% users) vs. Warm Users (top 98%)
     * Item Popularity: Head Articles (Top 20% most clicked) vs. Tail Articles (Bottom 80%)
 - Statistical Rigor: 1,000-resample non-parametric Bootstrap 95% Confidence Intervals
-- Outputs full markdown tables and in-depth analysis to q4.md.
+- Outputs full markdown tables and in-depth analysis to docs/q4.md.
 """
 
 import sys
@@ -381,7 +381,7 @@ def main():
     print("\nGenerating q4.md report...")
     md_content = generate_markdown(results)
     
-    out_path = ROOT / "q4.md"
+    out_path = ROOT / "docs" / "q4.md"
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(md_content)
     

@@ -253,7 +253,7 @@ def main():
     results_all["ebnerd_large"] = ebnerd_res
 
     # Output formatted JSON and Markdown
-    out_json = root / "ann_ablation_results.json"
+    out_json = root / "docs" / "ablations" / "ann_ablation_results.json"
     with open(out_json, "w", encoding="utf-8") as f:
         json.dump(results_all, f, indent=2)
 
