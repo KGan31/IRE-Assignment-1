@@ -5,8 +5,10 @@ import numpy as np
 import polars as pl
 import pytest
 
-# Ensure src/ directory is in sys.path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Ensure src/ and scripts/experiments/ directories are in sys.path
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(ROOT_DIR / "src"))
+sys.path.insert(0, str(ROOT_DIR / "scripts" / "experiments"))
 
 from eval_harness import OfflineEvaluationHarness
 from metrics import (

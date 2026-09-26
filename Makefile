@@ -19,7 +19,7 @@ features:
 	python src/feature_store.py --config configs/pipeline.yaml
 
 stats:
-	python processed_stats.py
+	python scripts/stats/processed_stats.py
 
 bm25:
 	python src/eval_bm25.py --dataset all --split val --max_history_len 20 --eval_mode global
@@ -35,13 +35,13 @@ features-mind-large:
 	python src/feature_store.py --dataset mind_large --config configs/pipeline.yaml
 
 submit-mind-bm25:
-	python src/generate_mind_submission.py --dataset_type large --eval_dev --output_dir submissions
+	python scripts/submissions/generate_mind_submission.py --dataset_type large --eval_dev --output_dir submissions
 
 submit-mind-semantic:
-	python src/generate_mind_semantic_submission.py --dataset_type large --eval_dev --output_dir submissions_semantic
+	python scripts/submissions/generate_mind_semantic_submission.py --dataset_type large --eval_dev --output_dir submissions_semantic
 
 submit-mind-reranker:
-	python src/generate_mind_reranker_submission.py --dataset_type large --eval_dev --output_dir submissions/submissions_mind_reranker
+	python scripts/submissions/generate_mind_reranker_submission.py --dataset_type large --eval_dev --output_dir submissions/submissions_mind_reranker
 
 download-ebnerd-large:
 	python src/download.py --dataset ebnerd_large
@@ -50,28 +50,28 @@ parse-ebnerd-large:
 	python src/parse_ebnerd.py --dataset_type large --split all
 
 submit-ebnerd-bm25:
-	python src/generate_ebnerd_submission.py --dataset_type large --eval_dev --output_dir submissions_ebnerd
+	python scripts/submissions/generate_ebnerd_submission.py --dataset_type large --eval_dev --output_dir submissions_ebnerd
 
 submit-ebnerd-bm25-fulltext:
-	python src/generate_ebnerd_submission.py --dataset_type large --include_body --eval_dev --output_dir submissions_ebnerd_fulltext
+	python scripts/submissions/generate_ebnerd_submission.py --dataset_type large --include_body --eval_dev --output_dir submissions_ebnerd_fulltext
 
 submit-ebnerd-semantic:
-	python src/generate_ebnerd_semantic_submission.py --dataset_type large --eval_dev --output_dir submissions_ebnerd_semantic
+	python scripts/submissions/generate_ebnerd_semantic_submission.py --dataset_type large --eval_dev --output_dir submissions_ebnerd_semantic
 
 submit-ebnerd-reranker:
-	python src/generate_ebnerd_reranker_submission.py --dataset_type large --output_dir submissions/submissions_ebnerd_reranker
+	python scripts/submissions/generate_ebnerd_reranker_submission.py --dataset_type large --output_dir submissions/submissions_ebnerd_reranker
 
 eval-ebnerd-reranker:
 	python src/evaluate_ebnerd_large_validation.py --max_impressions 50000
 
 submit-ebnerd-nrms-affinity:
-	python src/generate_nrms_codabench_submission.py --dataset ebnerd
+	python scripts/submissions/generate_nrms_codabench_submission.py --dataset ebnerd
 
 submit-mind-nrms-subcategory:
-	python src/generate_nrms_codabench_submission.py --dataset mind
+	python scripts/submissions/generate_nrms_codabench_submission.py --dataset mind
 
 submit-nrms-both:
-	python src/generate_nrms_codabench_submission.py --dataset both
+	python scripts/submissions/generate_nrms_codabench_submission.py --dataset both
 
 test:
 	pytest src/tests/ -v

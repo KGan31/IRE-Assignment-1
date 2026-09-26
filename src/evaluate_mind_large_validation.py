@@ -40,8 +40,11 @@ from tqdm import tqdm
 
 warnings.filterwarnings("ignore", category=UserWarning, module="lightgbm")
 
-# Ensure src is in sys.path
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# Ensure src and scripts/submissions are in sys.path
+SRC_DIR = Path(__file__).resolve().parent
+ROOT_DIR = SRC_DIR.parent
+sys.path.insert(0, str(SRC_DIR))
+sys.path.insert(0, str(ROOT_DIR / "scripts" / "submissions"))
 from embeddings import compute_user_representation, normalize_l2
 from metrics import compute_auc, compute_mrr, compute_ndcg_at_k
 from reranker import FEATURE_COLS

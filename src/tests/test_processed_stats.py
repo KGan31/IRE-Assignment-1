@@ -8,8 +8,10 @@ import pandas as pd
 import numpy as np
 import pytest
 
-# Ensure root directory is in sys.path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+# Ensure root directory and scripts/stats are in sys.path
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(ROOT_DIR))
+sys.path.insert(0, str(ROOT_DIR / "scripts" / "stats"))
 
 from processed_stats import (
     get_series_stats,

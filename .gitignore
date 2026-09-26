@@ -11,4 +11,18 @@ submissions/
 submissions_semantic/
 submissions*
 models/
-*.pkl
+*.pkl
+
+# LaTeX auxiliary build files
+*.aux
+*.log
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+
+# Runtime logs
+results/logs/*.txt
+AI_Prompts.log
+

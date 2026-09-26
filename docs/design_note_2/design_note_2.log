@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.3.8)  26 SEP 2026 21:54
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.3.8)  26 SEP 2026 22:48
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -981,12 +981,15 @@ Underfull \hbox (badness 10000) in paragraph at lines 279--279
 []|\OT1/ptm/b/n/10 (+20) 0.3941
  []
 
-[3]
+
 Underfull \hbox (badness 10000) in paragraph at lines 318--318
 []|\OT1/ptm/b/n/10 (+20) nDCG@10 (95%
  []
 
 
+LaTeX Warning: `!h' float specifier changed to `!ht'.
+
+[3]
 Underfull \hbox (badness 10000) in paragraph at lines 339--339
 []|\OT1/ptm/b/n/10 (+20) nDCG@10 (95%
  []
@@ -999,7 +1002,7 @@ Underfull \hbox (badness 10000) in alignment at lines 386--386
 
 LaTeX Warning: `!h' float specifier changed to `!ht'.
 
-[4]
+
 Underfull \hbox (badness 10000) in alignment at lines 446--446
 [][][][][][][] 
  []
@@ -1007,14 +1010,14 @@ Underfull \hbox (badness 10000) in alignment at lines 446--446
 
 LaTeX Warning: `!h' float specifier changed to `!ht'.
 
-
-Underfull \hbox (badness 10000) in paragraph at lines 476--476
+[4]
+Underfull \hbox (badness 10000) in paragraph at lines 479--479
 []|$\OMS/cmsy/m/n/10 ^^@\OT1/cmr/m/n/10 0\OML/cmm/m/it/10 :\OT1/cmr/m/n/10 0022
 $
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 476--476
+Underfull \hbox (badness 10000) in paragraph at lines 479--479
 []|$\OT1/cmr/m/n/10 +0\OML/cmm/m/it/10 :\OT1/cmr/m/n/10 0025$
  []
 
@@ -1024,39 +1027,44 @@ LaTeX Warning: `!h' float specifier changed to `!ht'.
 
 LaTeX Warning: `!h' float specifier changed to `!ht'.
 
-LaTeX Font Info:    Font shape `OT1/pcr/m/it' in size <10> not available
-(Font)              Font shape `OT1/pcr/m/sl' tried instead on input line 518.
+<mind_submission.png, id=113, 875.06924pt x 160.1985pt>
+File: mind_submission.png Graphic file (type png)
+<use mind_submission.png>
+Package pdftex.def Info: mind_submission.png  used on input line 521.
+(pdftex.def)             Requested size: 237.63522pt x 43.5035pt.
+<ebnerd_submission.png, id=115, 886.512pt x 129.48375pt>
+File: ebnerd_submission.png Graphic file (type png)
+<use ebnerd_submission.png>
+Package pdftex.def Info: ebnerd_submission.png  used on input line 532.
+(pdftex.def)             Requested size: 237.63522pt x 34.70818pt.
 
 LaTeX Warning: `!h' float specifier changed to `!ht'.
 
-[5]
 
-LaTeX Warning: `!h' float specifier changed to `!ht'.
-
-
-Underfull \hbox (badness 10000) in alignment at lines 577--577
+Underfull \hbox (badness 10000) in alignment at lines 580--580
 [][][][][][][][] 
  []
 
 
 LaTeX Warning: `!h' float specifier changed to `!ht'.
 
-[6] [7] [8] (docs/design_note_2/design_note_2.aux)
+[5 <docs/design_note_2/mind_submission.png> <docs/design_note_2/ebnerd_submissi
+on.png>] [6] [7] [8] (docs/design_note_2/design_note_2.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
  ***********
 Package rerunfilecheck Info: File `design_note_2.out' has not changed.
-(rerunfilecheck)             Checksum: F925AD2300E2B569ED614785659F8763;3767.
+(rerunfilecheck)             Checksum: 90F657C9A69736E43E294B46DE2BEFE5;3833.
  ) 
 Here is how much of TeX's memory you used:
  27284 strings out of 467525
- 501316 string characters out of 5423210
- 1002092 words of memory out of 5000000
- 55363 multiletter control sequences out of 15000+600000
- 684043 words of font info for 341 fonts, out of 8000000 for 9000
+ 501371 string characters out of 5423210
+ 1004035 words of memory out of 5000000
+ 55362 multiletter control sequences out of 15000+600000
+ 681557 words of font info for 341 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
- 84i,16n,94p,1358b,937s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 84i,16n,94p,1221b,937s stack positions out of 10000i,1000n,20000p,200000b,200000s
 <c:/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb><c:/tex
 live/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb><c:/texlive/2026
 /texmf-dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb><c:/texlive/2026/texmf-di
@@ -1070,20 +1078,18 @@ texmf-dist/fonts/type1/public/amsfonts/cm/cmr7.pfb><c:/texlive/2026/texmf-dist/
 fonts/type1/public/amsfonts/cm/cmr8.pfb><c:/texlive/2026/texmf-dist/fonts/type1
 /public/amsfonts/cm/cmr9.pfb><c:/texlive/2026/texmf-dist/fonts/type1/public/ams
 fonts/cm/cmsy10.pfb><c:/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/
-cmsy6.pfb><c:/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy7.pfb>
-<c:/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy8.pfb><c:/texliv
-e/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy9.pfb><c:/texlive/2026/tex
-mf-dist/fonts/type1/public/amsfonts/symbols/msam10.pfb><c:/texlive/2026/texmf-d
-ist/fonts/type1/urw/courier/ucrr8a.pfb><c:/texlive/2026/texmf-dist/fonts/type1/
-urw/courier/ucrro8a.pfb><c:/texlive/2026/texmf-dist/fonts/type1/urw/times/utmb8
-a.pfb><c:/texlive/2026/texmf-dist/fonts/type1/urw/times/utmbi8a.pfb><c:/texlive
-/2026/texmf-dist/fonts/type1/urw/times/utmr8a.pfb><c:/texlive/2026/texmf-dist/f
-onts/type1/urw/times/utmri8a.pfb>
-Output written on docs/design_note_2/design_note_2.pdf (8 pages, 314563 bytes).
+cmsy7.pfb><c:/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy8.pfb>
+<c:/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy9.pfb><c:/texliv
+e/2026/texmf-dist/fonts/type1/public/amsfonts/symbols/msam10.pfb><c:/texlive/20
+26/texmf-dist/fonts/type1/urw/courier/ucrr8a.pfb><c:/texlive/2026/texmf-dist/fo
+nts/type1/urw/times/utmb8a.pfb><c:/texlive/2026/texmf-dist/fonts/type1/urw/time
+s/utmbi8a.pfb><c:/texlive/2026/texmf-dist/fonts/type1/urw/times/utmr8a.pfb><c:/
+texlive/2026/texmf-dist/fonts/type1/urw/times/utmri8a.pfb>
+Output written on docs/design_note_2/design_note_2.pdf (8 pages, 342475 bytes).
 
 PDF statistics:
- 267 PDF objects out of 1000 (max. 8388607)
- 204 compressed objects within 3 object streams
- 40 named destinations out of 1000 (max. 500000)
- 89709 words of extra memory for PDF output out of 106986 (max. 10000000)
+ 256 PDF objects out of 1000 (max. 8388607)
+ 194 compressed objects within 2 object streams
+ 39 named destinations out of 1000 (max. 500000)
+ 83063 words of extra memory for PDF output out of 89155 (max. 10000000)
 

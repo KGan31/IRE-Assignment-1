@@ -223,7 +223,7 @@ Two-tower neural recommender: a \emph{news encoder} (frozen pretrained DocVec em
 % -----------------------------------------------------------------------
 
 \begin{itemize}
-  \item \textbf{Hybrid RRF over single-retriever.} BM25 excels on Danish editorial text (exact proper-noun matches for politicians, municipalities); dense retrieval handles English synonym-rich content (e.g.\ \textit{``presidential election''} / \textit{``White House vote''}). Rank-based fusion ($\sum_{m} (k_0 + r_m(d))^{-1}$) avoids tuning score-interpolation weights and is completely scale-agnostic.
+  \item \textbf{Hybrid RRF over single-retriever.} BM25 excels on Danish editorial text (exact proper-noun matches for politicians, municipalities); dense retrieval handles English synonym-rich content (e.g.\ \textit{``presidential election''} / \textit{``White House vote''}). RRF avoids tuning score-interpolation weights and is completely scale-agnostic.
   \item \textbf{Category granularity.} EB-NeRD uses 25 coarse editorial sections (e.g.\ \textit{sport}, \textit{krimi}); MIND exposes a two-level taxonomy ($\sim$291 \texttt{category/subcategory} pairs, e.g.\ \texttt{sports/football\_nfl}). Fine-grained subcategories on MIND give lower prior variance and more discriminative affinity signals.
   \item \textbf{LightGBM over neural re-rankers.} No GPU required; trains in under 2 min; feature importances are directly interpretable. Dominant feature: \texttt{session\_position} on MIND (gain 271) vs.\ \texttt{category\_affinity} on EB-NeRD (gain 268).
   \item \textbf{HNSW over flat FAISS.} Identical ranking metrics; HNSW delivers \textbf{2.12$\times$} speedup on MIND (0.45 ms vs.\ 0.96 ms) and \textbf{2.82$\times$} on EB-NeRD (0.68 ms vs.\ 1.92 ms) with $>$91\% Recall@200 retained.
@@ -233,11 +233,11 @@ Two-tower neural recommender: a \emph{news encoder} (frozen pretrained DocVec em
 \FloatBarrier
 
 % -----------------------------------------------------------------------
-\section{Q3 Ablations: Neural NRMS Architectural Improvements}
+\section{Ablations: NRMS Improvements using Recency and Category Affinity}
 \label{sec:q3}
 % -----------------------------------------------------------------------
 
-All ablations build upon the official neural baseline \textbf{NRMSDocVec} (4-head MHSA, additive-attention hidden dim 200, dropout 0.1, history length $H{=}20$ unless swept, $B{=}1000$ paired bootstrap). \textbf{Bridging Neural Modeling and Feature Engineering}: The architectural enhancements explored here for NRMS (specifically, additive section affinity and behavior-window recency) directly motivate and validate the tabular features (\texttt{category\_affinity\_score}, \texttt{user\_recency\_score}) incorporated into the LightGBM production pipeline in \S\ref{sec:experiments}. We evaluate two distinct modeling axes across both datasets: (1) temporal recency weighting (\S\ref{sec:ablation_recency}), and (2) topical domain filtering via historical category and subcategory affinity (\S\ref{sec:ablation_affinity}).\footnote{The cross mark ($^\dagger$) denotes statistically significant improvement over baseline ($p < 0.05$, where the non-parametric paired bootstrap 95\% confidence interval strictly excludes zero); we follow this representation for the rest of the document.} Crucially, category and subcategory affinity achieve statistically significant improvements across both datasets, whereas recency decay alone is hindered by timestamp coarseness on MIND.
+Both ablations build on the official neural baseline \textbf{NRMSDocVec} (4-head MHSA, additive-attention hidden dim 200, dropout 0.1, history length $H{=}20$ unless swept, $B{=}1000$ paired bootstrap on 5{,}000 validation impressions). They test two axes: (1) temporal recency weighting, and (2) topical category affinity. The headline finding: \textbf{category affinity is the reliable win} ($p<0.05$ on both datasets), while recency decay is only marginally significant and, on MIND, largely inert.
 
 % -----------------------------------------------------------------------
 \subsection{Ablation 1: Recency-Decayed Attention (EB-NeRD \& MIND)}
@@ -339,7 +339,7 @@ where $f_{\text{NRMS}}(u,a) = \mathbf{u}^\top \mathbf{v}_a$ is the Vanilla NRMSD
   \end{tabularx}
 \end{table}
 
-\textbf{Cross-Dataset Synthesis \& Complementarity.} Across both datasets, the heuristic-only baselines (AUC 0.5659 on EB-NeRD, AUC 0.5516 on MIND) are substantially inferior to the neural baseline (0.5809 and 0.6392). This confirms that topical affinity priors and dense neural representations are fundamentally complementary: the neural encoder provides expressive semantic generalization, while the affinity prior regularizes predictions toward the user's habitual topical domains.
+% \textbf{Cross-Dataset Synthesis \& Complementarity.} Across both datasets, the heuristic-only baselines (AUC 0.5659 on EB-NeRD, AUC 0.5516 on MIND) are substantially inferior to the neural baseline (0.5809 and 0.6392). This confirms that topical affinity priors and dense neural representations are fundamentally complementary: the neural encoder provides expressive semantic generalization, while the affinity prior regularizes predictions toward the user's habitual topical domains.
 
 \FloatBarrier
 
@@ -388,7 +388,7 @@ Table~\ref{tab:extended_pipeline} presents the comprehensive end-to-end evaluati
 
 \subsection{Subgroup Slicing: Cold-Start vs. Warm Readers and Head vs. Tail Articles}
 
-Following Assignment~1, we evaluate two operational slices on the test sets:
+We evaluate two operational slices on the test sets:
 \begin{itemize}
   \item \textbf{User Cohort Slicing}: \textbf{Cold-Start} (bottom 2\% empirical percentile of historical clicks: $\le 13$ clicks on EB-NeRD, $N{=}106$; $\le 0$ clicks on MIND, $N{=}8,122$, $51.7\%$) vs.\ \textbf{Warm} readers (EB-NeRD: $N{=}4,902$; MIND: $N{=}7,575$).
   \item \textbf{Item Catalog Slicing}: \textbf{Head} articles (top 20\% most-clicked articles in training history) vs.\ \textbf{Tail} articles (bottom 80\%).
@@ -446,9 +446,12 @@ Table~\ref{tab:slicing} reports the slicing results across Stage~1 and Stage~2 w
   \end{tabularx}
 \end{table}
 
+% \textbf{Slicing Insights.}
+% (1)~\textit{Cold-start resilience}: On EB-NeRD, cold-start readers gain +59.09\% AUC and +71.34\% MRR because the re-ranker heavily weights editorial freshness (\texttt{article\_freshness\_hours}) and section popularity as robust non-personalized priors. On MIND, cold readers ($0$ historical clicks) stay on par with random prior, while warm readers enjoy huge personalization gains (+14.01\% AUC, +26.13\% nDCG@5).
+% (2)~\textit{Head vs.\ tail dynamics}: In news recommendation, popularity exhibits rapid temporal decay. By computing head articles over the active evaluation period (top 20\% most-clicked articles in the evaluation split), we capture authentic breaking-news concentration. On EB-NeRD test, head items ($55.17\%$ of impressions) show dramatic re-ranking gains ($\text{AUC } 0.4849 \to \textbf{0.7608}$, +56.90\%; nDCG@5 $+74.71\%$), while tail items ($44.83\%$ of impressions) also improve substantially ($\text{AUC } 0.5027 \to \textbf{0.6706}$, +33.40\%; nDCG@5 $+40.12\%$). On MIND test, where viral news concentration is intense ($20\%$ of items account for $90.5\%$ of clicks, covering $94.24\%$ of impressions), head items improve by +14.36\% nDCG@5 and +13.18\% MRR, confirming that LightGBM successfully differentiates individual reader preferences among high-traffic headlines. Tail impressions likewise achieve steady gains (+17.03\% nDCG@5, +9.91\% MRR) with high novelty ($19.64$) and zero coverage collapse.
 \textbf{Slicing Insights.}
-(1)~\textit{Cold-start resilience}: On EB-NeRD, cold-start readers gain +59.09\% AUC and +71.34\% MRR because the re-ranker heavily weights editorial freshness (\texttt{article\_freshness\_hours}) and section popularity as robust non-personalized priors. On MIND, cold readers ($0$ historical clicks) stay on par with random prior, while warm readers enjoy huge personalization gains (+14.01\% AUC, +26.13\% nDCG@5).
-(2)~\textit{Head vs.\ tail dynamics}: In news recommendation, popularity exhibits rapid temporal decay. By computing head articles over the active evaluation period (top 20\% most-clicked articles in the evaluation split), we capture authentic breaking-news concentration. On EB-NeRD test, head items ($55.17\%$ of impressions) show dramatic re-ranking gains ($\text{AUC } 0.4849 \to \textbf{0.7608}$, +56.90\%; nDCG@5 $+74.71\%$), while tail items ($44.83\%$ of impressions) also improve substantially ($\text{AUC } 0.5027 \to \textbf{0.6706}$, +33.40\%; nDCG@5 $+40.12\%$). On MIND test, where viral news concentration is intense ($20\%$ of items account for $90.5\%$ of clicks, covering $94.24\%$ of impressions), head items improve by +14.36\% nDCG@5 and +13.18\% MRR, confirming that LightGBM successfully differentiates individual reader preferences among high-traffic headlines. Tail impressions likewise achieve steady gains (+17.03\% nDCG@5, +9.91\% MRR) with high novelty ($19.64$) and zero coverage collapse.
+(1)~\textit{Cold-start resilience}: EB-NeRD cold readers gain the most from re-ranking (+59.1\% AUC, +71.3\% MRR), since the ranker falls back on editorial freshness and section popularity, non-personalized priors that work even with zero history. MIND cold readers ($0$ clicks) see no lift, as MIND lacks publication timestamps and thus this fallback signal; warm MIND readers, with real history to personalize on, gain +14.0\% AUC and +26.1\% nDCG@5.
+(2)~\textit{Head vs.\ tail}: Head articles are computed over the evaluation period itself (not globally) to reflect news' rapid popularity decay. On EB-NeRD, both head (55.2\% of impressions, AUC $0.4849\to\mathbf{0.7608}$, +56.9\%) and tail (44.8\%, AUC $0.5027\to\mathbf{0.6706}$, +33.4\%) improve substantially. On MIND, where 20\% of items drive 90.5\% of clicks (94.2\% of impressions), head items gain +14.4\% nDCG@5 and +13.2\% MRR, confirming the ranker differentiates preferences even among high-traffic headlines, while tail impressions gain +17.0\% nDCG@5 with novelty and coverage held steady.
 
 \subsection{Position Bias Neutralization at Serving Time}
 
@@ -494,11 +497,11 @@ Final prediction bundles were generated for both competitions and submitted to t
     \toprule
     \textbf{Competition Track} & \textbf{Model Architecture} & \textbf{AUC} & \textbf{MRR} & \textbf{nDCG@5} & \textbf{nDCG@10} \\
     \midrule
-    \multirow{2}{*}{\textbf{MIND Large} (\#13967)}
+    \multirow{2}{*}{\textbf{MIND Large}}
       & System A: LightGBM Re-Ranker   & \textbf{0.6545} & \textbf{0.3243} & \textbf{0.3505} & \textbf{0.4058} \\
       & System B: NRMS + Subcat.\ Aff.  & 0.6502 & 0.3140 & 0.3397 & 0.3969 \\
     \midrule
-    \multirow{2}{*}{\textbf{EB-NeRD} (\#2469, 8-day)}
+    \multirow{2}{*}{\textbf{EB-NeRD}}
       & System A: LightGBM Re-Ranker   & \textbf{0.7004} & \textbf{0.4603} & \textbf{0.5249} & \textbf{0.5720} \\
       & System B: NRMS + Cat.\ Aff.     & 0.5664 & 0.3659 & 0.4064 & 0.4816 \\
     \bottomrule
@@ -516,7 +519,7 @@ Figure~\ref{fig:codabench} displays the official Codabench submission verificati
     }{%
       \fbox{\begin{minipage}[c][2.2cm][c]{\dimexpr\linewidth-2\fboxsep-2\fboxrule\relax}\centering\small\textit{[Place \texttt{mind\_submission.png} here]}\end{minipage}}
     }
-    \caption{MIND Large Submission (\#13967)}
+    \caption{MIND Large Submission}
     \label{subfig:mind_sub}
   \end{subfigure}
   \hfill
@@ -525,9 +528,9 @@ Figure~\ref{fig:codabench} displays the official Codabench submission verificati
     \IfFileExists{ebnerd_submission.png}{%
       \includegraphics[width=\linewidth]{ebnerd_submission.png}
     }{%
-      \fbox{\begin{minipage}[c][2.2cm][c]{\dimexpr\linewidth-2\fboxsep-2\fboxrule\relax}\centering\small\textit{[Place \texttt{ebnerd\_submission.png} here]}\end{minipage}}
+      \fbox{\begin{minipage}[c][2.2cm][c]{\dimexpr\linewidth-2\fboxsep-2\fboxrule\relax}\centering\small\textit{[Place \texttt{ebnerd_submission.png} here]}\end{minipage}}
     }
-    \caption{EB-NeRD Submission (\#2469)}
+    \caption{EB-NeRD Large Submission}
     \label{subfig:ebnerd_sub}
   \end{subfigure}
   \vspace{-2pt}
@@ -543,7 +546,7 @@ Single-request retrieval and serving economics were benchmarked across the entir
 
 \begin{table}[h!]
   \centering
-  \caption{Index and feature store memory footprints across catalog scales (Demo/Small vs.\ Large production splits from \texttt{Q4.md}).}
+  \caption{Index and feature store memory footprints across catalog scales (Demo/Small vs.\ Large production splits).}
   \label{tab:memory}
   \small\setlength{\tabcolsep}{2.5pt}
   \begin{tabularx}{\linewidth}{l X R{1.7cm} R{1.7cm} R{1.7cm} R{1.7cm}}
@@ -610,15 +613,14 @@ Both systems comfortably pass the $\text{p99} \le 100\text{ ms}$ SLA with a $>2.
 % -----------------------------------------------------------------------
 
 A $10\times$ scale-up ($\sim$1.2M articles, 27M users, 6,000 concurrent QPS, 600M interactions) breaks the single-node architecture in four places, roughly in this order:
-
 \begin{itemize}
-  \item \textbf{On-the-fly feature extraction (breaks first).} Per-request $O(H)$ history scans and Python-GIL-bound loops for recency/affinity features saturate CPU cores at $6{,}000$ QPS, pushing p99 past $250$ ms. \textit{Fix}: move feature computation off the request path into a streaming store (Kafka/Flink $\to$ Redis/Feast) that pre-materializes decay-weighted histograms on click ingestion, turning serving-time lookup into an $O(1)$ key-value read ($<0.5$ ms).
+  \item \textbf{On-the-fly feature extraction.} Per-request $O(H)$ history scans for recency/affinity features run inside Python's GIL, so a single process cannot parallelize this work across cores no matter how many are available; at $6{,}000$ QPS this serializes and pushes p99 past $250$ ms. \textit{Fix}: move feature computation off the request path into a streaming store (Kafka/Flink $\to$ Redis/Feast) that pre-materializes decay-weighted histograms on click ingestion, turning serving-time lookup into an $O(1)$ key-value read ($<0.5$ ms).
 
   \item \textbf{In-memory BM25 posting lists.} At 1.2M articles, posting lists grow to multi-GB structures; intersecting them causes cache thrashing and memory-bus contention. \textit{Fix}: WAND/Block-Max WAND pruning to skip documents that can't reach top-$K$, plus horizontal sharding across an Elasticsearch/OpenSearch cluster.
 
-  \item \textbf{FAISS HNSW rebuild latency.} Raw vectors ($3.68$ GB) plus graph edges ($\approx400$ MB) still fit in RAM, but rebuilding the HNSW graph for fresh articles takes minutes, blocking real-time index freshness for breaking news. \textit{Fix}: switch to \texttt{IndexIVFPQ} or ScaNN with 8-bit product quantization — 64-byte codes give an $8\times$ memory cut ($3.68$ GB $\to$ 460 MB) and keep the catalog resident in L3 cache.
+  \item \textbf{FAISS HNSW index staleness.} Raw vectors ($3.68$ GB) and graph edges ($\approx400$ MB) still fit comfortably in RAM at this scale, so memory is not the constraint; the real problem is that a full HNSW rebuild takes minutes, so newly published breaking news is invisible to retrieval until the next rebuild completes. \textit{Fix}: maintain a small exact-search index for articles published since the last rebuild, merged into the main HNSW graph on a periodic (e.g., minute-level) cadence, so freshness no longer depends on full-index rebuild time. \texttt{IndexIVFPQ}/ScaNN quantization remains worth adopting separately as the catalog grows, since 64-byte codes give an $8\times$ memory cut ($3.68$ GB $\to$ 460 MB) and keep the catalog resident in L3 cache.
 
-  \item \textbf{Re-ranker scoring throughput.} Scoring $K{=}100$ candidates through 100 trees via Python C-API bindings adds serialization and scheduling overhead at $6{,}000$ QPS. \textit{Fix}: compile the tree ensemble with Treelite or serve via Triton/ONNX Runtime — AVX-512 vectorized scoring cuts Stage~2 latency from $5$ ms to $<0.4$ ms.
+  \item \textbf{Re-ranker scoring throughput.} Scoring $K{=}100$ candidates through 100 trees via Python C-API bindings adds serialization and scheduling overhead at $6{,}000$ QPS. \textit{Fix}: compile the tree ensemble with Treelite or serve via Triton/ONNX Runtime, AVX-512 vectorized scoring cuts Stage~2 latency from $5$ ms to $<0.4$ ms.
 \end{itemize}
 % -----------------------------------------------------------------------
 \vspace{-4pt}
