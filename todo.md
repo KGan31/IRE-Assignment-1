@@ -1,7 +1,7 @@
 # Assignment 2 TODO & Implementation Backlog
 
 ## 1. EB-NeRD Rich Engagement Signals (Scroll Depth & Dwell Time)
-- [ ] **Data Parsing (`src/parse_ebnerd.py`)**:
+- [x] **Data Parsing (`src/parse_ebnerd.py`)**:
   - In `parse_history()`, load `scroll_percentage_fixed` and `read_time_fixed` from `history.parquet` alongside `article_id_fixed` and `impression_time_fixed`.
   - Explode them simultaneously into the unified schema as `scroll_percentage` and `dwell_time`.
   - Ensure compatibility with MIND (which lacks scroll tracking) by keeping these fields nullable (`None`).

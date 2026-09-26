@@ -23,7 +23,6 @@ FEATURE_COLS = [
     "user_recency_score",
     "user_mean_dwell_time",
     "article_freshness_hours",
-    "article_popularity_24h",
     "category_affinity_score",
     "session_position",
     "bm25_score",
@@ -36,6 +35,7 @@ def prepare_features_and_groups(
     df: pl.DataFrame,
     feature_cols: List[str] = FEATURE_COLS,
     max_impressions: Optional[int] = None,
+    include_ids: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, List[str], List[str]]:
     """
     Extracts feature matrix X, target labels y, query groups, and impression/article metadata.
@@ -48,8 +48,8 @@ def prepare_features_and_groups(
     groups = df.group_by("impression_id", maintain_order=True).len()["len"].to_numpy()
     X = df.select(feature_cols).to_numpy().astype(np.float32)
     y = df["label"].to_numpy().astype(np.int32)
-    imp_ids = df["impression_id"].to_list()
-    art_ids = df["article_id"].to_list()
+    imp_ids = df["impression_id"].to_list() if include_ids else []
+    art_ids = df["article_id"].to_list() if include_ids else []
 
     return X, y, groups, imp_ids, art_ids
 
@@ -194,7 +194,7 @@ def train_reranker(
 
 def main():
     parser = argparse.ArgumentParser(description="Train and evaluate LightGBM Re-Ranker.")
-    parser.add_argument("--dataset", type=str, default="mind", choices=["mind", "ebnerd"])
+    parser.add_argument("--dataset", type=str, default="mind", choices=["mind", "ebnerd", "mind_large", "ebnerd_large"])
     parser.add_argument("--train_path", type=str, default=None)
     parser.add_argument("--val_path", type=str, default=None)
     parser.add_argument("--max_train_impressions", type=int, default=None)

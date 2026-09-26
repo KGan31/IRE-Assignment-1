@@ -191,7 +191,6 @@ def compute_cross_features(
         "user_recency_score": user_feats.get("recency_score", 0.0),
         "user_mean_dwell_time": user_feats.get("mean_dwell_time", 0.0),
         "article_freshness_hours": article_feats.get("freshness_hours", 0.0),
-        "article_popularity_24h": article_feats.get("popularity_24h", 0),
         "category_affinity_score": cat_affinity_score,
         "session_position": session_position,
         "bm25_score": bm25_score,
@@ -211,6 +210,7 @@ def build_feature_dataset(
     half_life_hours: float = HALF_LIFE_DEFAULT_HOURS,
     show_progress: bool = True,
     bm25_retriever: Optional[Any] = None,
+    doc_token_scores: Optional[Any] = None,
     art_token_ids_map: Optional[Dict[str, Set[int]]] = None,
     art_cat_map: Optional[Dict[str, str]] = None,
     art_pub_map: Optional[Dict[str, Any]] = None,
@@ -267,6 +267,17 @@ def build_feature_dataset(
             bm25_retriever = None
             art_token_ids_map = {}
 
+    if doc_token_scores is None and bm25_retriever is not None:
+        try:
+            import scipy.sparse as sp
+            csr_token_doc = sp.csr_matrix(
+                (bm25_retriever.scores["data"], bm25_retriever.scores["indices"], bm25_retriever.scores["indptr"]),
+                shape=(len(bm25_retriever.scores["indptr"]) - 1, bm25_retriever.scores["num_docs"])
+            )
+            doc_token_scores = csr_token_doc.T.tocsr()
+        except Exception:
+            doc_token_scores = None
+
     # 4. Build fast point-in-time user history map if not provided
     if user_history_map is None:
         user_history_map = {}
@@ -302,7 +313,6 @@ def build_feature_dataset(
     col_recency_score = []
     col_mean_dwell = []
     col_freshness = []
-    col_popularity = []
     col_cat_affinity = []
     col_position = []
     col_bm25 = []
@@ -369,12 +379,10 @@ def build_feature_dataset(
 
         # Compute point-in-time BM25 scores for candidate articles
         bm25_all_scores = None
-        if bm25_retriever is not None and history_aids:
-            user_q_tokens = set()
+        user_q_tokens = set()
+        if history_aids and art_token_ids_map is not None:
             for aid in history_aids[-20:]:
                 user_q_tokens.update(art_token_ids_map.get(aid, set()))
-            if user_q_tokens:
-                bm25_all_scores = bm25_retriever.get_scores(list(user_q_tokens))
 
         # Negative sampling if requested
         if negative_sampling_ratio is not None and has_labels and len(clicked_set) > 0:
@@ -384,6 +392,24 @@ def build_feature_dataset(
             selected_cands = pos_cands + neg_cands[:n_neg]
         else:
             selected_cands = cands
+
+        bm25_cand_scores = None
+        c_idxs = [article_id_to_idx.get(cid, -1) for cid in selected_cands]
+        if user_q_tokens:
+            if doc_token_scores is not None:
+                valid_mask = [0 <= idx < doc_token_scores.shape[0] for idx in c_idxs]
+                if any(valid_mask):
+                    valid_c_idxs = [idx for idx, v in zip(c_idxs, valid_mask) if v]
+                    sub = doc_token_scores[valid_c_idxs, :]
+                    scored = np.asarray(sub[:, list(user_q_tokens)].sum(axis=1)).ravel()
+                    bm25_cand_scores = [0.0] * len(selected_cands)
+                    p = 0
+                    for pi, v in enumerate(valid_mask):
+                        if v:
+                            bm25_cand_scores[pi] = float(scored[p])
+                            p += 1
+            elif bm25_retriever is not None:
+                bm25_all_scores = bm25_retriever.get_scores(list(user_q_tokens))
 
         for pos_idx, cand_id in enumerate(selected_cands):
             cat = art_cat_map.get(cand_id, "")
@@ -396,15 +422,17 @@ def build_feature_dataset(
 
             # Fast single dot product
             sem_score = 0.0
-            c_idx = article_id_to_idx.get(cand_id)
+            c_idx = c_idxs[pos_idx]
             if user_vec is not None and embeddings_norm is not None and c_idx is not None:
-                if c_idx < len(embeddings_norm):
+                if 0 <= c_idx < len(embeddings_norm):
                     sem_score = float(np.dot(user_vec, embeddings_norm[c_idx]))
 
             # Exact BM25 lexical score
             bm25_score = 0.0
-            if bm25_all_scores is not None and c_idx is not None:
-                if c_idx < len(bm25_all_scores):
+            if bm25_cand_scores is not None:
+                bm25_score = bm25_cand_scores[pos_idx]
+            elif bm25_all_scores is not None and c_idx is not None:
+                if 0 <= c_idx < len(bm25_all_scores):
                     bm25_score = float(bm25_all_scores[c_idx])
 
             first_stage = max(bm25_score, sem_score)
@@ -418,7 +446,6 @@ def build_feature_dataset(
             col_recency_score.append(float(recency_score))
             col_mean_dwell.append(float(mean_dwell))
             col_freshness.append(float(freshness))
-            col_popularity.append(0)
             col_cat_affinity.append(float(cat_aff))
             col_position.append(pos_idx)
             col_bm25.append(float(bm25_score))
@@ -436,7 +463,6 @@ def build_feature_dataset(
             "user_recency_score": pl.Float32,
             "user_mean_dwell_time": pl.Float32,
             "article_freshness_hours": pl.Float32,
-            "article_popularity_24h": pl.Int32,
             "category_affinity_score": pl.Float32,
             "session_position": pl.Int32,
             "bm25_score": pl.Float32,
@@ -453,7 +479,6 @@ def build_feature_dataset(
         "user_recency_score": pl.Series(col_recency_score, dtype=pl.Float32),
         "user_mean_dwell_time": pl.Series(col_mean_dwell, dtype=pl.Float32),
         "article_freshness_hours": pl.Series(col_freshness, dtype=pl.Float32),
-        "article_popularity_24h": pl.Series(col_popularity, dtype=pl.Int32),
         "category_affinity_score": pl.Series(col_cat_affinity, dtype=pl.Float32),
         "session_position": pl.Series(col_position, dtype=pl.Int32),
         "bm25_score": pl.Series(col_bm25, dtype=pl.Float32),
@@ -559,6 +584,14 @@ def process_dataset_split(
                 pl.scan_parquet(hist_dev_path).filter(pl.col("user_id").is_in(test_uids.implode())).collect()
             )
         history = pl.concat(hist_parts, how="diagonal") if hist_parts else None
+    elif dataset == "mind_large" and split == "train":
+        train_uids = impressions["user_id"].unique()
+        hist_train_path = data_dir / "history_train.parquet"
+        if hist_train_path.exists():
+            print(f"[{dataset.upper()}] Loading prior train history for {len(train_uids):,} train users...")
+            history = pl.scan_parquet(hist_train_path).filter(pl.col("user_id").is_in(train_uids.implode())).collect()
+        else:
+            history = None
     else:
         history = pl.read_parquet(hist_file) if hist_file and hist_file.exists() else None
 
@@ -592,6 +625,7 @@ def process_dataset_split(
         art_pub_map = dict(zip(art_ids, pub_times))
 
         bm25_retriever = None
+        doc_token_scores = None
         art_token_ids_map = {}
         try:
             import bm25s
@@ -607,8 +641,17 @@ def process_dataset_split(
             bm25_retriever = bm25s.BM25()
             bm25_retriever.index(tokens, show_progress=False)
             art_token_ids_map = {aid: set(tokens.ids[i]) for i, aid in enumerate(art_ids)}
-        except Exception:
+
+            import scipy.sparse as sp
+            csr_token_doc = sp.csr_matrix(
+                (bm25_retriever.scores["data"], bm25_retriever.scores["indices"], bm25_retriever.scores["indptr"]),
+                shape=(len(bm25_retriever.scores["indptr"]) - 1, bm25_retriever.scores["num_docs"])
+            )
+            doc_token_scores = csr_token_doc.T.tocsr()
+        except Exception as e:
+            print(f"BM25 build warning: {e}")
             bm25_retriever = None
+            doc_token_scores = None
 
         user_history_map = {}
         if history is not None:
@@ -650,6 +693,7 @@ def process_dataset_split(
                 article_id_to_idx=article_id_to_idx,
                 show_progress=False,
                 bm25_retriever=bm25_retriever,
+                doc_token_scores=doc_token_scores,
                 art_token_ids_map=art_token_ids_map,
                 art_cat_map=art_cat_map,
                 art_pub_map=art_pub_map,

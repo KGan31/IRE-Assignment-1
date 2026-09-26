@@ -77,12 +77,14 @@ class RetrieveThenRankPipeline:
         retriever_type: str = "hybrid",
         top_k: int = 100,
         half_life_hours: float = HALF_LIFE_DEFAULT_HOURS,
+        use_approximate: bool = True,
     ):
         self.dataset = dataset.lower()
         self.data_dir = processed_dir / self.dataset
         self.retriever_type = retriever_type.lower()
         self.top_k = top_k
         self.half_life_hours = half_life_hours
+        self.use_approximate = use_approximate
 
         # 1. Load articles catalog
         articles_path = self.data_dir / "articles.parquet"
@@ -103,7 +105,7 @@ class RetrieveThenRankPipeline:
             print(f"[{self.dataset.upper()}] Loading embeddings and building FAISS index from {emb_path}...")
             raw_embs = np.load(emb_path)
             self.embeddings_norm = normalize_l2(raw_embs)
-            self.sem_index = EmbeddingIndex(use_approximate=False)
+            self.sem_index = EmbeddingIndex(use_approximate=self.use_approximate)
             self.sem_index.build_index(self.embeddings_norm, self.article_ids)
         else:
             self.embeddings_norm = None
@@ -143,7 +145,6 @@ class RetrieveThenRankPipeline:
             "user_recency_score",
             "user_mean_dwell_time",
             "article_freshness_hours",
-            "article_popularity_24h",
             "category_affinity_score",
             "session_position",
             "bm25_score",
@@ -235,7 +236,6 @@ class RetrieveThenRankPipeline:
                 user_feats.get("recency_score", 0.0),
                 user_feats.get("mean_dwell_time", 0.0),
                 float(freshness),
-                0,  # popularity_24h
                 float(cat_aff),
                 pos_idx,
                 float(bm25_score),
@@ -380,6 +380,7 @@ def evaluate_two_stage_pipeline(
     sample_size: int = 2000,
     retriever_type: str = "hybrid",
     top_k: int = 100,
+    use_approximate: bool = True,
 ) -> Dict[str, Any]:
     """
     Evaluates the two-stage pipeline on validation impressions, measuring Stage 1 vs Stage 2 metrics.
@@ -388,6 +389,7 @@ def evaluate_two_stage_pipeline(
         dataset=dataset,
         retriever_type=retriever_type,
         top_k=top_k,
+        use_approximate=use_approximate,
     )
 
     data_dir = Path(f"data/processed/{dataset}")
@@ -397,7 +399,7 @@ def evaluate_two_stage_pipeline(
 
     print(f"\nLoading validation impressions from {imp_file}...")
     impressions_df = pl.read_parquet(imp_file)
-    if sample_size is not None and len(impressions_df) > sample_size:
+    if sample_size is not None and sample_size > 0 and len(impressions_df) > sample_size:
         impressions_df = impressions_df.slice(0, sample_size)
 
     hist_file = data_dir / f"history_{split}.parquet"
@@ -543,8 +545,10 @@ def main():
     parser = argparse.ArgumentParser(description="Run Two-Stage Retrieve-then-Rank Pipeline.")
     parser.add_argument("--dataset", type=str, default="ebnerd", choices=["ebnerd", "mind"])
     parser.add_argument("--retriever", type=str, default="hybrid", choices=["hybrid", "semantic", "bm25"])
-    parser.add_argument("--sample_size", type=int, default=2000)
+    parser.add_argument("--sample_size", type=int, default=2000, help="0 or negative for full validation split")
     parser.add_argument("--top_k", type=int, default=100)
+    parser.add_argument("--use_approximate", action="store_true", default=True, help="Use FAISS HNSW ANN index")
+    parser.add_argument("--exact", dest="use_approximate", action="store_false", help="Use exact Flat index")
     parser.add_argument("--output_json", type=str, default=None)
     args = parser.parse_args()
 
@@ -553,6 +557,7 @@ def main():
         retriever_type=args.retriever,
         sample_size=args.sample_size,
         top_k=args.top_k,
+        use_approximate=args.use_approximate,
     )
 
     out_file = args.output_json if args.output_json else f"models/{args.dataset}_two_stage_pipeline_results.json"

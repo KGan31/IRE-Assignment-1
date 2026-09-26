@@ -111,6 +111,10 @@ def parse_history(history_parquet: Path) -> pl.DataFrame:
         desired_cols.append("article_id_fixed")
     if "impression_time_fixed" in available_cols:
         desired_cols.append("impression_time_fixed")
+    if "read_time_fixed" in available_cols:
+        desired_cols.append("read_time_fixed")
+    if "scroll_percentage_fixed" in available_cols:
+        desired_cols.append("scroll_percentage_fixed")
 
     df = pl.read_parquet(history_parquet, columns=desired_cols)
     if df.is_empty() or "article_id_fixed" not in df.columns:
@@ -120,26 +124,50 @@ def parse_history(history_parquet: Path) -> pl.DataFrame:
                 "user_id": pl.Utf8,
                 "clicked_article_id": pl.Utf8,
                 "click_time": pl.Datetime,
+                "dwell_time": pl.Float32,
+                "scroll_percentage": pl.Float32,
             }
         )
 
-    out = (
-        df.select([
-            pl.lit(DATASET).alias("dataset"),
-            (pl.lit("ebnerd_") + pl.col("user_id").cast(pl.Utf8)).alias("user_id"),
-            pl.col("article_id_fixed"),
-            pl.col("impression_time_fixed") if "impression_time_fixed" in df.columns else pl.lit(None),
-        ])
-        .explode(["article_id_fixed", "impression_time_fixed"] if "impression_time_fixed" in df.columns else ["article_id_fixed"], empty_as_null=True)
+    has_imp_time = "impression_time_fixed" in df.columns
+    has_read_time = "read_time_fixed" in df.columns
+    has_scroll = "scroll_percentage_fixed" in df.columns
+
+    select_exprs = [
+        pl.lit(DATASET).alias("dataset"),
+        (pl.lit("ebnerd_") + pl.col("user_id").cast(pl.Utf8)).alias("user_id"),
+        pl.col("article_id_fixed"),
+    ]
+    explode_cols = ["article_id_fixed"]
+
+    if has_imp_time:
+        select_exprs.append(pl.col("impression_time_fixed"))
+        explode_cols.append("impression_time_fixed")
+    if has_read_time:
+        select_exprs.append(pl.col("read_time_fixed"))
+        explode_cols.append("read_time_fixed")
+    if has_scroll:
+        select_exprs.append(pl.col("scroll_percentage_fixed"))
+        explode_cols.append("scroll_percentage_fixed")
+
+    exploded = (
+        df.select(select_exprs)
+        .explode(explode_cols, empty_as_null=True)
         .filter(pl.col("article_id_fixed").is_not_null())
-        .select([
-            pl.col("dataset"),
-            pl.col("user_id"),
-            (pl.lit("ebnerd_") + pl.col("article_id_fixed").cast(pl.Utf8)).alias("clicked_article_id"),
-            pl.col("impression_time_fixed").cast(pl.Datetime).alias("click_time") if "impression_time_fixed" in df.columns else pl.lit(None).cast(pl.Datetime).alias("click_time"),
-        ])
     )
 
+    final_select = [
+        pl.col("dataset"),
+        pl.col("user_id"),
+        (pl.lit("ebnerd_") + pl.col("article_id_fixed").cast(pl.Utf8)).alias("clicked_article_id"),
+        pl.col("impression_time_fixed").cast(pl.Datetime).alias("click_time") if has_imp_time else pl.lit(None).cast(pl.Datetime).alias("click_time"),
+    ]
+    if has_read_time:
+        final_select.append(pl.col("read_time_fixed").cast(pl.Float32).alias("dwell_time"))
+    if has_scroll:
+        final_select.append(pl.col("scroll_percentage_fixed").cast(pl.Float32).alias("scroll_percentage"))
+
+    out = exploded.select(final_select)
     return out
 
 

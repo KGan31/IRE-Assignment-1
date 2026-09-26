@@ -20,17 +20,16 @@ Impression Request (user_id, timestamp, inview candidates or full catalog)
   │       └─ Hybrid Fusion Prior (Reciprocal Rank Fusion / max(BM25, Semantic))
   │
   └──► [Stage 2: LightGBM LambdaMART Re-Ranker]
-          ├─ 10 Point-in-Time Engineered Features:
+          ├─ 9 Point-in-Time Engineered Features:
           │    1. user_click_count
           │    2. user_recency_score (half-life decay: w = 0.5^(dt / 24h))
           │    3. user_mean_dwell_time (seconds)
           │    4. article_freshness_hours ((t_imp - t_pub) in hours)
-          │    5. article_popularity_24h (prior 24h click volume)
-          │    6. category_affinity_score (historical category fraction)
-          │    7. session_position (presentation rank index)
-          │    8. bm25_score (explicit lexical relevance)
-          │    9. semantic_score (dense user-article cosine similarity)
-          │   10. first_stage_score (Stage 1 retrieval prior)
+          │    5. category_affinity_score (historical category fraction)
+          │    6. session_position (presentation rank index)
+          │    7. bm25_score (explicit lexical relevance)
+          │    8. semantic_score (dense user-article cosine similarity)
+          │    9. first_stage_score (Stage 1 retrieval prior)
           └─ Output: Final re-ranked candidate list sorted descending by score
 ```
 

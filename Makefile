@@ -64,6 +64,15 @@ submit-ebnerd-reranker:
 eval-ebnerd-reranker:
 	python src/evaluate_ebnerd_large_validation.py --max_impressions 50000
 
+submit-ebnerd-nrms-affinity:
+	python src/generate_nrms_codabench_submission.py --dataset ebnerd
+
+submit-mind-nrms-subcategory:
+	python src/generate_nrms_codabench_submission.py --dataset mind
+
+submit-nrms-both:
+	python src/generate_nrms_codabench_submission.py --dataset both
+
 test:
 	pytest src/tests/ -v
 

@@ -239,6 +239,5 @@ def test_cross_features_hybrid_lexical_semantic():
     assert cross["category_affinity_score"] == 0.8
     assert cross["session_position"] == 1
     assert cross["article_freshness_hours"] == 3.5
-    assert cross["article_popularity_24h"] == 12
     assert cross["user_click_count"] == 5
 

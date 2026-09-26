@@ -41,7 +41,8 @@ class OfflineEvaluationHarness:
         total_catalog_size: Optional[int] = None,
         n_bootstraps: int = 1000,
         ci: float = 0.95,
-        cold_start_threshold: int = 5,
+        cold_start_threshold: Optional[int] = None,
+        cold_start_percentile: Optional[float] = 2.0,
         head_item_percentile: float = 0.20,
     ):
         self.embeddings = embeddings
@@ -51,7 +52,15 @@ class OfflineEvaluationHarness:
         self.n_bootstraps = n_bootstraps
         self.ci = ci
         self.cold_start_threshold = cold_start_threshold
+        self.cold_start_percentile = cold_start_percentile
         self.head_item_percentile = head_item_percentile
+
+    def _get_cold_threshold(self, user_history_lengths: Sequence[int]) -> int:
+        if self.cold_start_threshold is not None:
+            return int(self.cold_start_threshold)
+        if self.cold_start_percentile is not None and len(user_history_lengths) > 0:
+            return int(np.percentile(user_history_lengths, self.cold_start_percentile))
+        return 5
 
     @classmethod
     def from_data(
@@ -62,7 +71,8 @@ class OfflineEvaluationHarness:
         article_id_to_idx: Optional[Dict[str, int]] = None,
         n_bootstraps: int = 1000,
         ci: float = 0.95,
-        cold_start_threshold: int = 5,
+        cold_start_threshold: Optional[int] = None,
+        cold_start_percentile: Optional[float] = 2.0,
         head_item_percentile: float = 0.20,
     ) -> "OfflineEvaluationHarness":
         """Factory method to initialize the harness from raw DataFrames."""
@@ -85,6 +95,7 @@ class OfflineEvaluationHarness:
             n_bootstraps=n_bootstraps,
             ci=ci,
             cold_start_threshold=cold_start_threshold,
+            cold_start_percentile=cold_start_percentile,
             head_item_percentile=head_item_percentile,
         )
 
@@ -144,13 +155,15 @@ class OfflineEvaluationHarness:
         head_recs: List[List[str]] = []
         tail_recs: List[List[str]] = []
 
+        cold_thresh = self._get_cold_threshold(user_history_lengths) if user_history_lengths is not None else 5
+
         for i in range(n_impressions):
             retrieved = retrieved_lists[i]
             gt = ground_truth_sets[i]
 
             is_cold = False
             if user_history_lengths is not None:
-                is_cold = (user_history_lengths[i] <= self.cold_start_threshold)
+                is_cold = (user_history_lengths[i] <= cold_thresh)
                 if is_cold:
                     cold_recs.append(retrieved)
                 else:
@@ -245,7 +258,7 @@ class OfflineEvaluationHarness:
 
         # Slices
         if user_history_lengths is not None:
-            results["slices"]["user_cohort"]["cold_threshold"] = self.cold_start_threshold
+            results["slices"]["user_cohort"]["cold_threshold"] = cold_thresh
             results["slices"]["user_cohort"]["cold_count"] = len(cold_recalls[k_list[0]])
             results["slices"]["user_cohort"]["warm_count"] = len(warm_recalls[k_list[0]])
             for k in k_list:
@@ -350,6 +363,8 @@ class OfflineEvaluationHarness:
 
         all_ranked_recs: List[List[str]] = []
 
+        cold_thresh = self._get_cold_threshold(user_history_lengths) if user_history_lengths is not None else 5
+
         for i in range(n_impressions):
             cands = candidate_article_lists[i]
             y_true = candidate_labels[i]
@@ -361,7 +376,7 @@ class OfflineEvaluationHarness:
 
             is_cold = False
             if user_history_lengths is not None:
-                is_cold = (user_history_lengths[i] <= self.cold_start_threshold)
+                is_cold = (user_history_lengths[i] <= cold_thresh)
                 if is_cold:
                     cold_recs.append(ranked_cands)
                 else:
@@ -451,7 +466,7 @@ class OfflineEvaluationHarness:
 
         # User cohort slices
         if user_history_lengths is not None:
-            results["slices"]["user_cohort"]["cold_threshold"] = self.cold_start_threshold
+            results["slices"]["user_cohort"]["cold_threshold"] = cold_thresh
             results["slices"]["user_cohort"]["cold_count"] = len(cold_mrr)
             results["slices"]["user_cohort"]["warm_count"] = len(warm_mrr)
             for m_name, c_scores, w_scores in [

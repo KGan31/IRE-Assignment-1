@@ -147,6 +147,35 @@ def load_compact_user_history(
             user_history_map[u] = tuple(a)
         del test_agg
         gc.collect()
+    else:
+        # Fallback for validation or splits without hist_test: check precomputed user_features
+        data_dir = hist_train_path.parent
+        user_feat_val = data_dir / "user_features_val.parquet"
+        if user_feat_val.exists():
+            print(f"  - Reading precomputed user history from {user_feat_val}...")
+            val_agg = (
+                pl.scan_parquet(user_feat_val)
+                .select(["user_id", "click_history"])
+                .collect()
+            )
+            for u, h in zip(val_agg["user_id"].to_list(), val_agg["click_history"].to_list()):
+                if h:
+                    user_history_map[u] = tuple(h[-max_history_len:])
+            del val_agg
+            gc.collect()
+        elif hist_train_path.exists():
+            print(f"  - Reading user history from {hist_train_path}...")
+            train_agg = (
+                pl.scan_parquet(hist_train_path)
+                .select(["user_id", "clicked_article_id"])
+                .group_by("user_id")
+                .agg(pl.col("clicked_article_id").tail(max_history_len).alias("aids"))
+                .collect()
+            )
+            for u, a in zip(train_agg["user_id"].to_list(), train_agg["aids"].to_list()):
+                user_history_map[u] = tuple(a)
+            del train_agg
+            gc.collect()
 
     print(f"Loaded compact history for {len(user_history_map):,} users in {time.time() - start_t:.2f}s.")
     return user_history_map
@@ -424,11 +453,10 @@ def generate_reranker_submission(
                 X_cand[:, 0] = n_clicks
                 X_cand[:, 1] = float(recency_score)
                 X_cand[:, 2] = float(mean_dwell)
-                X_cand[:, 4] = cand_pop_scores  # populate article_popularity_24h feature
-                X_cand[:, 6] = 0.0              # neutralize position bias to avoid over-penalizing lower candidates
-                X_cand[:, 7] = bm25_scores
-                X_cand[:, 8] = sem_scores
-                X_cand[:, 9] = first_stage_scores
+                X_cand[:, 5] = 0.0              # neutralize position bias to avoid over-penalizing lower candidates
+                X_cand[:, 6] = bm25_scores
+                X_cand[:, 7] = sem_scores
+                X_cand[:, 8] = first_stage_scores
 
                 # 3. Candidate metadata features
                 for pos_idx, cand_id in enumerate(cands):
@@ -438,7 +466,7 @@ def generate_reranker_submission(
                     if pub is not None and isinstance(pub, (datetime, pd.Timestamp)):
                         freshness = max(0.0, (imp_time - pub).total_seconds() / 3600.0)
                     X_cand[pos_idx, 3] = float(freshness)
-                    X_cand[pos_idx, 5] = float(cat_affinity.get(cat, 0.0))
+                    X_cand[pos_idx, 4] = float(cat_affinity.get(cat, 0.0))
 
                 batch_X.append(X_cand)
                 batch_metadata.append((raw_impr_id, num_cands, is_cold, cand_pop_scores, sem_scores))

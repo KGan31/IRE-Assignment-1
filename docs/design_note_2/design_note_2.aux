@@ -1,0 +1,60 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\citation{cormack2009rrf}
+\@writefile{toc}{\contentsline {section}{\numberline {1}What Was Built}{1}{section.1}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Two-stage Retrieve-then-Rank pipeline. BM25 and FAISS-HNSW rankings are fused via RRF; LightGBM re-ranks the joint candidate set using hand-crafted behavioural features.}}{1}{figure.caption.1}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{fig:pipeline}{{1}{1}{Two-stage Retrieve-then-Rank pipeline. BM25 and FAISS-HNSW rankings are fused via RRF; LightGBM re-ranks the joint candidate set using hand-crafted behavioural features}{figure.caption.1}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces LightGBM feature set with split feature importances (total number of tree decision splits).}}{1}{table.caption.3}\protected@file@percent }
+\newlabel{tab:features}{{1}{1}{LightGBM feature set with split feature importances (total number of tree decision splits)}{table.caption.3}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces System B (NRMSDocVec) Architecture. A two-tower neural network featuring Multi-Head Self-Attention over sequence history, augmented with recency-decayed additive attention and a late-fusion category affinity prior.}}{2}{figure.caption.2}\protected@file@percent }
+\newlabel{fig:system_b}{{2}{2}{System B (NRMSDocVec) Architecture. A two-tower neural network featuring Multi-Head Self-Attention over sequence history, augmented with recency-decayed additive attention and a late-fusion category affinity prior}{figure.caption.2}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {2}Key Design Choices \& Alternatives}{2}{section.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3}Q3 Ablations: Neural NRMS Architectural Improvements}{2}{section.3}\protected@file@percent }
+\newlabel{sec:q3}{{3}{2}{Q3 Ablations: Neural NRMS Architectural Improvements}{section.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Ablation 1: Recency-Decayed Attention (EB-NeRD \& MIND)}{3}{subsection.3.1}\protected@file@percent }
+\newlabel{sec:ablation_recency}{{3.1}{3}{Ablation 1: Recency-Decayed Attention (EB-NeRD \& MIND)}{subsection.3.1}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Recency-Decayed Attention ablation on EB-NeRD and MIND validation splits ($N{=}5000$, $B{=}1000$ paired bootstrap, optimal half-life $\tau = 24\text  { h}$).}}{3}{table.caption.4}\protected@file@percent }
+\newlabel{tab:recency_results}{{2}{3}{Recency-Decayed Attention ablation on EB-NeRD and MIND validation splits ($N{=}5000$, $B{=}1000$ paired bootstrap, optimal half-life $\tau = 24\text { h}$)}{table.caption.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Ablation 2: Topical Category and Subcategory Affinity (EB-NeRD \& MIND)}{3}{subsection.3.2}\protected@file@percent }
+\newlabel{sec:ablation_affinity}{{3.2}{3}{Ablation 2: Topical Category and Subcategory Affinity (EB-NeRD \& MIND)}{subsection.3.2}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Category Affinity ablation on EB-NeRD validation split ($N{=}5000$, $B{=}1000$ bootstrap).}}{4}{table.caption.5}\protected@file@percent }
+\newlabel{tab:affinity_ebnerd}{{3}{4}{Category Affinity ablation on EB-NeRD validation split ($N{=}5000$, $B{=}1000$ bootstrap)}{table.caption.5}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Subcategory Affinity ablation on MIND validation split ($N{=}5000$, $B{=}1000$ bootstrap).}}{4}{table.caption.6}\protected@file@percent }
+\newlabel{tab:affinity_mind}{{4}{4}{Subcategory Affinity ablation on MIND validation split ($N{=}5000$, $B{=}1000$ bootstrap)}{table.caption.6}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Extended Two-Stage Pipeline Evaluation \& Codabench Submissions}{4}{section.4}\protected@file@percent }
+\newlabel{sec:twostage_extended}{{4}{4}{Extended Two-Stage Pipeline Evaluation \& Codabench Submissions}{section.4}{}}
+\newlabel{sec:experiments}{{4}{4}{Extended Two-Stage Pipeline Evaluation \& Codabench Submissions}{section.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Full Two-Stage Pipeline Benchmark (All 7 Metrics with 95\% Bootstrap CIs)}{4}{subsection.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Subgroup Slicing: Cold-Start vs. Warm Readers and Head vs. Tail Articles}{4}{subsection.4.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Comprehensive Two-Stage Pipeline Evaluation on Official Test Sets ($B{=}1000$ bootstrap iterations). Absolute delta $\Delta = \text  {Stage 2} - \text  {Stage 1}$. All Stage 2 bootstrap CIs strictly exclude the Stage 1 baseline.}}{5}{table.caption.7}\protected@file@percent }
+\newlabel{tab:extended_pipeline}{{5}{5}{Comprehensive Two-Stage Pipeline Evaluation on Official Test Sets ($B{=}1000$ bootstrap iterations). Absolute delta $\Delta = \text {Stage 2} - \text {Stage 1}$. All Stage 2 bootstrap CIs strictly exclude the Stage 1 baseline}{table.caption.7}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Position Bias Neutralization at Serving Time}{5}{subsection.4.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.4}Official Codabench Leaderboard Results \& Screenshots}{5}{subsection.4.4}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces Subgroup Slicing on Official Test Sets ($B{=}1000$ bootstrap 95\% CIs). Panel A: User click-volume cohorts. Panel B: Item catalog popularity.}}{6}{table.caption.8}\protected@file@percent }
+\newlabel{tab:slicing}{{6}{6}{Subgroup Slicing on Official Test Sets ($B{=}1000$ bootstrap 95\% CIs). Panel A: User click-volume cohorts. Panel B: Item catalog popularity}{table.caption.8}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {7}{\ignorespaces Serving-time evaluation with logged position vs.\ neutralized position ($\texttt  {session\_position} = 0$).}}{6}{table.caption.9}\protected@file@percent }
+\newlabel{tab:antigaming}{{7}{6}{Serving-time evaluation with logged position vs.\ neutralized position ($\texttt {session\_position} = 0$)}{table.caption.9}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {5}Serving \& Scale Analysis}{6}{section.5}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {8}{\ignorespaces Official Codabench test-set leaderboard results across competition tracks and architectures.}}{7}{table.caption.10}\protected@file@percent }
+\newlabel{tab:codabench}{{8}{7}{Official Codabench test-set leaderboard results across competition tracks and architectures}{table.caption.10}{}}
+\newlabel{subfig:mind_sub}{{3a}{7}{MIND Large Submission (\#13967)}{figure.caption.11}{}}
+\newlabel{sub@subfig:mind_sub}{{a}{7}{MIND Large Submission (\#13967)}{figure.caption.11}{}}
+\newlabel{subfig:ebnerd_sub}{{3b}{7}{EB-NeRD Submission (\#2469)}{figure.caption.11}{}}
+\newlabel{sub@subfig:ebnerd_sub}{{b}{7}{EB-NeRD Submission (\#2469)}{figure.caption.11}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Official Codabench submission confirmations for MIND Large and EB-NeRD.}}{7}{figure.caption.11}\protected@file@percent }
+\newlabel{fig:codabench}{{3}{7}{Official Codabench submission confirmations for MIND Large and EB-NeRD}{figure.caption.11}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {9}{\ignorespaces Index and feature store memory footprints across catalog scales (Demo/Small vs.\ Large production splits from \texttt  {Q4.md}).}}{7}{table.caption.12}\protected@file@percent }
+\newlabel{tab:memory}{{9}{7}{Index and feature store memory footprints across catalog scales (Demo/Small vs.\ Large production splits from \texttt {Q4.md})}{table.caption.12}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {10}{\ignorespaces Serving latency and cost projection (AWS c6i.2xlarge, 8 vCPUs, \$0.34/hr). SLA target: p99 $\le $ 100 ms.}}{7}{table.caption.13}\protected@file@percent }
+\newlabel{tab:serving}{{10}{7}{Serving latency and cost projection (AWS c6i.2xlarge, 8 vCPUs, \$0.34/hr). SLA target: p99 $\le $ 100 ms}{table.caption.13}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {6}System Failure Points at 10$\times $ Scale}{7}{section.6}\protected@file@percent }
+\newlabel{sec:scale_breakdown}{{6}{7}{System Failure Points at \texorpdfstring {10$\times $}{10x} Scale}{section.6}{}}
+\bibcite{kruse2024ebnerd}{1}
+\bibcite{wu2019nrms}{2}
+\bibcite{wu2020mind}{3}
+\bibcite{cormack2009rrf}{4}
+\bibcite{ke2017lightgbm}{5}
+\gdef \@abspage@last{8}
